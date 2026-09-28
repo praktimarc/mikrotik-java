@@ -131,7 +131,7 @@ static long download(Path target, Source source)
 
 - [ ] **Step 1: Write failing success tests in `FileDownloadTest`.** Cover a payload larger than two 32768-byte chunks with a final partial chunk, assert requested offsets are based on actual returned byte count, assert byte equality, returned length, no `.part`, and a valid zero-byte source that never calls `read()`.
 - [ ] **Step 2: Write failing stale-file/failure tests.** Start with both final and `.part` present; assert they are reset. Make `Source.size()` throw and assert the old final no longer exists. Cover zero-progress before completion, oversized chunk, premature source failure after at least one chunk, and final expected-size mismatch; successful cleanup leaves neither final nor `.part`.
-- [ ] **Step 3: Add filesystem failure tests where portable.** A target with an unusable parent/directory or required deletion failure must propagate `IOException` and must not report success; do not create missing parent directories or weaken permissions.
+- [ ] **Step 3: Add deterministic filesystem failure tests.** Use a non-empty directory at the final target or `.part` path so required deletion fails with `IOException`; assert `Source.size()`/`read()` is never invoked after failed local reset. Also assert a missing parent directory is not created implicitly.
 - [ ] **Step 4: Run `mvn -B -Dtest=FileDownloadTest test`.** Expected: FAIL because `FileDownload` does not exist.
 - [ ] **Step 5: Implement `FileDownload.download()`.** Use sibling `<filename>.part`, `Files.deleteIfExists`, buffered or direct output streaming, actual `payload.length` offsets, `Files.size(part)` validation, `ATOMIC_MOVE` first with fallback only on `AtomicMoveNotSupportedException`, and best-effort cleanup that preserves the primary exception and attaches cleanup failures as suppressed where practical.
 - [ ] **Step 6: Run `mvn -B -Dtest=FileDownloadTest test`.** Expected: PASS.
@@ -162,12 +162,13 @@ public abstract long downloadFile(String remoteFile, Path localFile)
 - [ ] **Step 1: Create a minimal local `RouterOsTestServer` test fixture.** It accepts one native API socket, reads command sentences/`.tag`, and can emit raw tagged `!re`, `!done`, and `!trap` sentences including arbitrary `=data=` bytes. Keep it test-only and deterministic.
 - [ ] **Step 2: Write failing end-to-end binary test.** Use a synthetic payload spanning multiple chunks and containing all `0x00..0xFF` values plus hostile sequences; fake `/file/print` returns integer byte size and fake `/file/read` returns requested slices. Assert `Files.readAllBytes(target)` equals the source exactly and returned byte count matches.
 - [ ] **Step 3: Add command-construction and edge tests.** Use a remote name containing spaces, `=`, and punctuation and assert the test server receives the exact API query/parameter value. Cover zero-byte file, missing remote file, malformed/non-numeric/negative size, missing/duplicate `data`, and RouterOS `!trap` cleanup.
-- [ ] **Step 4: Add interleaved tag-routing test.** Start a normal asynchronous text command and a file download on the same connection; have the test server interleave tagged responses. Assert the text listener gets only its text result and the downloaded file gets only its raw bytes.
-- [ ] **Step 5: Run `mvn -B -Dtest=ApiConnectionFileDownloadTest test`.** Expected: FAIL because public `downloadFile()` is not implemented.
-- [ ] **Step 6: Add the public method/Javadoc to `ApiConnection` and implement it in `ApiConnectionImpl`.** Validate non-null arguments and non-blank remote filename; delegate local lifecycle to `FileDownload`. Remote discovery must require exactly one matching file with a parseable non-negative integer `size`.
-- [ ] **Step 7: Implement `readFileChunk()` with `/file/read` and `executeBinaryRead()`.** Always request chunk size `<= 32768`; use raw payload bytes without conversion.
-- [ ] **Step 8: Run `mvn -B -Dtest=ApiConnectionFileDownloadTest,FileDownloadTest,ApiConnectionImplTest,RawSentenceTest,UtilTest test`.** Expected: PASS.
-- [ ] **Step 9: Commit Task 5.** Suggested commit: `feat: download RouterOS files without binary conversion`.
+- [ ] **Step 4: Add full text-API transport regression tests against the test server.** Exercise login completion, a synchronous `!re`/`!done` result, asynchronous listener delivery, an API `!trap`, `/cancel` tag handling, and connection close. Assert public text behavior remains unchanged after the raw-sentence refactor.
+- [ ] **Step 5: Add interleaved tag-routing test.** Start a normal asynchronous text command and a file download on the same connection; have the test server interleave tagged responses. Assert the text listener gets only its text result and the downloaded file gets only its raw bytes.
+- [ ] **Step 6: Run `mvn -B -Dtest=ApiConnectionFileDownloadTest test`.** Expected: FAIL because public `downloadFile()` is not implemented.
+- [ ] **Step 7: Add the public method/Javadoc to `ApiConnection` and implement it in `ApiConnectionImpl`.** Validate non-null arguments and non-blank remote filename; delegate local lifecycle to `FileDownload`. Remote discovery must require exactly one matching file with a parseable non-negative integer `size`.
+- [ ] **Step 8: Implement `readFileChunk()` with `/file/read` and `executeBinaryRead()`.** Always request chunk size `<= 32768`; use raw payload bytes without conversion.
+- [ ] **Step 9: Run `mvn -B -Dtest=ApiConnectionFileDownloadTest,FileDownloadTest,ApiConnectionImplTest,RawSentenceTest,UtilTest test`.** Expected: PASS.
+- [ ] **Step 10: Commit Task 5.** Suggested commit: `feat: download RouterOS files without binary conversion`.
 
 ### Task 6: Document, Version, and Verify the Fork Release Candidate
 
