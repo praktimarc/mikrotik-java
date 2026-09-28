@@ -12,6 +12,7 @@ This fork keeps the existing Java API and package names compatible with upstream
 - Current fork version: `3.0.8-praktimarc.1`
 - Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`
 - Java packages remain unchanged: `me.legrange.mikrotik.*`
+- Java baseline: Java 11; builds require JDK 11 or newer
 - License: Apache License 2.0; original attribution is retained
 
 Fork releases use the upstream version plus a Praktimarc suffix:
@@ -33,6 +34,8 @@ Release JARs are published on the [GitHub Releases page](https://github.com/prak
 A release contains the main JAR, source JAR, and Javadoc JAR. GitHub Releases are the initial distribution mechanism and do **not** by themselves provide a remote Maven repository.
 
 ### Build and install locally with Maven
+
+A JDK 11 or newer and Maven are required. The build targets Java 11 bytecode.
 
 Clone this repository and run:
 
