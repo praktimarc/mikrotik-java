@@ -37,7 +37,7 @@ The first fork release will not:
 - introduce a new build system;
 - publish to GitHub Packages yet;
 - automatically merge upstream changes;
-- include unrelated modernization of Maven plugins or Java language level unless required to make the build work reliably.
+- include unrelated modernization beyond the compiler/tooling changes required for the fork's Java 11 baseline.
 
 ## Maven Identity
 
@@ -130,6 +130,8 @@ No automatic upstream merge is required. The fork should prefer a small, reviewa
 
 Maven remains the authoritative build tool.
 
+The maintained fork targets Java 11 bytecode. GitHub Actions builds use Temurin JDK 11. Local builds may use a newer JDK as long as Maven compiles with `<release>11</release>`. The fork uses `maven-compiler-plugin` 3.13.0 for this baseline.
+
 The fork must continue to produce:
 
 ```text
@@ -163,9 +165,9 @@ v3.0.8-praktimarc.1
 The release workflow shall:
 
 1. check out the tagged source;
-2. configure the supported Java version;
+2. configure Temurin JDK 11;
 3. run Maven tests;
-4. build the package;
+4. build the package targeting Java 11 bytecode;
 5. verify that the expected JAR artifacts exist;
 6. create or populate the corresponding GitHub Release;
 7. attach the main JAR, sources JAR, and Javadoc JAR.
@@ -196,6 +198,7 @@ It should state:
 - purpose of the Praktimarc fork;
 - location of downloadable releases;
 - Maven coordinates of the fork artifact;
+- Java 11 as the fork bytecode baseline;
 - that Java packages remain compatible with the original library.
 
 The README must not imply that Praktimarc's releases are official upstream releases.
@@ -224,6 +227,7 @@ It includes:
 - the synchronous listener error-completion regression test;
 - the corresponding one-line production fix;
 - fork Maven identity;
+- Java 11 bytecode baseline with JDK 11 CI and release builds;
 - fork README information;
 - GitHub release automation.
 
@@ -248,7 +252,7 @@ It should explain:
 - that marking the synchronous listener complete on error preserves the real RouterOS error and returns immediately;
 - that a regression test accompanies the fix.
 
-The fork-specific POM changes, Maven coordinates, README fork branding, release workflow, and fork versioning must not be part of the upstream pull request.
+The fork-specific POM changes, Maven coordinates, README fork branding, release workflow, Java 11 baseline, and fork versioning must not be part of the upstream pull request.
 
 ## Success Criteria
 
@@ -256,6 +260,7 @@ The fork setup is complete when:
 
 - the bugfix is incorporated into fork `master`;
 - Maven coordinates identify the Praktimarc fork;
+- build tooling targets Java 11 bytecode and CI uses JDK 11;
 - the project builds and tests successfully;
 - the three expected JAR artifacts are generated;
 - tag `v3.0.8-praktimarc.1` can produce a GitHub Release containing those artifacts;

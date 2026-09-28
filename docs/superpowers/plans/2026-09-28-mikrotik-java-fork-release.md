@@ -6,7 +6,7 @@
 
 **Architecture:** The fork-specific release line starts from the already verified bugfix commit `72a40fd735cb8a6328c878ba92f736f83db7d68c` on `fix/sync-listener-error-completion`. A separate branch `feature/praktimarc-release-line` adds only fork identity, documentation and GitHub release automation. Java packages and APIs remain unchanged, while Maven artifact ownership changes to `io.github.praktimarc`.
 
-**Tech Stack:** Java 7 source/target, JDK 8 build runtime, Maven, JUnit 4.13.1, GitHub Actions, GitHub Releases, GitHub CLI on hosted Actions runners.
+**Tech Stack:** Java 11 bytecode baseline, `maven-compiler-plugin` 3.13.0 with `<release>11</release>`, JDK 11 for CI/release builds, newer JDKs permitted for local builds, Maven, JUnit 4.13.1, GitHub Actions, GitHub Releases, GitHub CLI on hosted Actions runners.
 
 **Spec:** `docs/superpowers/specs/2026-09-28-mikrotik-java-fork-release-design.md`
 
@@ -16,6 +16,7 @@
 - Initial fork version: `3.0.8-praktimarc.1`.
 - Initial release tag: `v3.0.8-praktimarc.1`.
 - Java packages remain `me.legrange.mikrotik.*`.
+- Fork artifacts target Java 11 bytecode.
 - No public Java API changes are introduced by the fork setup.
 - No Maven Central deployment.
 - No GitHub Packages publishing in this phase.
@@ -45,13 +46,14 @@
 
 **Interfaces:**
 - Consumes: clean bugfix HEAD `72a40fd735cb8a6328c878ba92f736f83db7d68c`.
-- Produces: Maven artifact `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`.
+- Produces: Maven artifact `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1` targeting Java 11 bytecode.
 
 - [ ] Verify the upstream-compatible bugfix branch against upstream base `ec5f6650816e5e63a00fbb0ae3aa511493df3a65`; expected changed files are only `ApiConnectionImpl.java` and `ApiConnectionImplTest.java`, with one production-line addition.
 - [ ] Create `feature/praktimarc-release-line` from `72a40fd735cb8a6328c878ba92f736f83db7d68c` without modifying `fix/sync-listener-error-completion`.
 - [ ] Add the approved design and implementation documents.
 - [ ] Confirm pre-change Maven identity is `me.legrange:mikrotik:3.0.8`.
 - [ ] Change `pom.xml` to `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`; update project URL and SCM metadata to `https://github.com/praktimarc/mikrotik-java`; do not rename Java packages and do not invoke the Sonatype release profile.
+- [ ] Update `maven-compiler-plugin` to 3.13.0 and compile with `<release>11</release>` so the maintained fork targets Java 11 bytecode.
 - [ ] Verify Maven model with `mvn help:evaluate` for groupId, artifactId and version when Maven is available.
 - [ ] Run `mvn -B -Dtest=ApiConnectionImplTest test` when Maven is available; expected PASS.
 - [ ] Commit gate: suggested commit `build: establish praktimarc fork release line`.
@@ -67,10 +69,10 @@
 
 - [ ] Confirm existing triggers are `push -> master` and `pull_request -> master`, with `mvn -B package --file pom.xml`.
 - [ ] Preserve low-frequency triggers: pushes to `master` and PRs targeting `master`; do not add generic feature-branch push triggers.
-- [ ] Use maintained official checkout and Java setup actions with JDK 8.
+- [ ] Use maintained official checkout and Java setup actions with Temurin JDK 11.
 - [ ] Run `mvn -B clean verify --file pom.xml`.
 - [ ] Validate workflow semantics: feature-branch push does not run CI; PR to `master` does; push to `master` does; tests run during verify.
-- [ ] Run equivalent Maven verification locally where available; do not claim a green build without real evidence.
+- [ ] Run equivalent Maven verification locally where available; a newer local JDK is acceptable because Maven compiles with `<release>11</release>`; do not claim a green build without real evidence.
 - [ ] Commit gate: suggested commit `ci: verify maintained fork on master changes`.
 
 ### Task 3: Add Tag-Based GitHub Release Automation
@@ -83,7 +85,7 @@
 - Produces the main, sources and Javadoc JARs plus a GitHub Release for `v3.0.8-praktimarc.1`.
 
 - [ ] Trigger only tags matching `v*-praktimarc.*`; set `contents: write`; do not run on ordinary pushes or pull requests.
-- [ ] Check out the exact tagged revision and use JDK 8.
+- [ ] Check out the exact tagged revision and use Temurin JDK 11.
 - [ ] Read Maven project version into `VERSION` and require `GITHUB_REF_NAME == "v${VERSION}"`; mismatch must stop before publication.
 - [ ] Run `mvn -B clean verify --file pom.xml`; failure stops release publication.
 - [ ] Require exact files `target/mikrotik-${VERSION}.jar`, `target/mikrotik-${VERSION}-sources.jar`, and `target/mikrotik-${VERSION}-javadoc.jar`; absence must fail the workflow.
@@ -101,12 +103,12 @@
 - Produces: clear usage instructions for Praktimarc's maintained fork and a verified release candidate.
 
 - [ ] Add a fork notice identifying `praktimarc/mikrotik-java` as a maintained fork of `GideonLeGrange/mikrotik-java`, based on upstream `3.0.8`, with first fork release `3.0.8-praktimarc.1`; do not imply official upstream status.
-- [ ] Document Maven identity `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`; note that GitHub Releases alone are not a remote Maven repository; document `mvn install` or local installation of the downloaded JAR; Java imports remain `me.legrange.mikrotik.*`.
+- [ ] Document Maven identity `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`; note that GitHub Releases alone are not a remote Maven repository; document `mvn install` or local installation of the downloaded JAR; Java imports remain `me.legrange.mikrotik.*`; document Java 11 as the bytecode baseline.
 - [ ] Document version convention `3.0.8-praktimarc.N` and reset to `3.0.9-praktimarc.1` for a future upstream 3.0.9 base.
 - [ ] Run `mvn -B clean verify --file pom.xml`; expected BUILD SUCCESS and zero failing tests.
 - [ ] Verify the three expected JARs and confirm the main JAR contains `me/legrange/mikrotik/` classes.
 - [ ] Re-verify upstream PR branch isolation: the clean branch still contains only regression test and one-line production fix, without fork POM/README/workflow/docs changes.
-- [ ] Review fork release branch diff against upstream base; expected change classes are bugfix, test, Maven identity/version, approved docs, CI workflow, release workflow and fork README; no Java API/package rename.
+- [ ] Review fork release branch diff against upstream base; expected change classes are bugfix, test, Maven identity/version, Java 11 compiler baseline, approved docs, CI workflow, release workflow and fork README; no Java API/package rename.
 - [ ] Commit gate: suggested commit `docs: document praktimarc fork distribution`.
 - [ ] Push gate: push `feature/praktimarc-release-line` only after fresh verification; stop before merging to `master`.
 
