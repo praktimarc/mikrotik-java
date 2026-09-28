@@ -8,6 +8,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -131,8 +132,30 @@ public final class ApiConnectionImpl extends ApiConnection {
         return tag;
     }
 
+    private byte[] executeBinaryRead(Command cmd, int timeout) throws MikrotikApiException {
+        SyncBinaryListener l = new SyncBinaryListener();
+        String tag = nextTag();
+        cmd.setTag(tag);
+        binaryListeners.put(tag, l);
+        try {
+            Util.write(cmd, out);
+        } catch (UnsupportedEncodingException ex) {
+            binaryListeners.remove(tag);
+            throw new ApiDataException(ex.getMessage(), ex);
+        } catch (IOException ex) {
+            binaryListeners.remove(tag);
+            throw new ApiConnectionException(ex.getMessage(), ex);
+        }
+        try {
+            return l.getResult(timeout);
+        } finally {
+            binaryListeners.remove(tag);
+        }
+    }
+
     private ApiConnectionImpl() {
         this.listeners = new ConcurrentHashMap<>();
+        this.binaryListeners = new ConcurrentHashMap<>();
     }
 
     /**
@@ -172,6 +195,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     private Reader reader;
     private Processor processor;
     private final Map<String, ResultListener> listeners;
+    private final Map<String, BinaryResultListener> binaryListeners;
     private final AtomicInteger _tag = new AtomicInteger(0);
     private int timeout = ApiConnection.DEFAULT_COMMAND_TIMEOUT;
 
@@ -237,10 +261,43 @@ public final class ApiConnectionImpl extends ApiConnection {
         public void run() {
             while (connected) {
                 try {
-                    dispatch(reader.take().toTextResponse());
+                    RawSentence sentence = reader.take();
+                    String tag = sentence.getTag();
+                    BinaryResultListener binary = tag == null ? null : binaryListeners.get(tag);
+                    if (binary != null) {
+                        dispatchBinary(sentence, tag, binary);
+                    } else {
+                        dispatch(sentence.toTextResponse());
+                    }
                 } catch (MikrotikApiException ex) {
                     // Preserve existing behavior: malformed/unroutable responses are ignored.
                 }
+            }
+        }
+
+        private void dispatchBinary(RawSentence sentence, String tag, BinaryResultListener l) {
+            try {
+                switch (sentence.getType()) {
+                    case "!re":
+                        l.receive(sentence.requireSingleRawAttribute("data"));
+                        break;
+                    case "!done":
+                        l.completed();
+                        binaryListeners.remove(tag);
+                        break;
+                    case "!trap":
+                    case "!halt":
+                        l.error(new ApiCommandException((Error) sentence.toTextResponse()));
+                        binaryListeners.remove(tag);
+                        break;
+                    default:
+                        l.error(new ApiDataException("Unexpected binary response type '" + sentence.getType() + "'"));
+                        binaryListeners.remove(tag);
+                        break;
+                }
+            } catch (MikrotikApiException ex) {
+                l.error(ex);
+                binaryListeners.remove(tag);
             }
         }
 
@@ -265,6 +322,64 @@ public final class ApiConnectionImpl extends ApiConnection {
                 nextTag();
             }
         }
+    }
+
+    private static class SyncBinaryListener implements BinaryResultListener {
+
+        @Override
+        public synchronized void receive(byte[] data) {
+            if (received) {
+                err = new ApiDataException("Binary command returned multiple data results");
+                complete = true;
+                notifyAll();
+                return;
+            }
+            this.data = Arrays.copyOf(data, data.length);
+            received = true;
+        }
+
+        @Override
+        public synchronized void error(MikrotikApiException ex) {
+            err = ex;
+            complete = true;
+            notifyAll();
+        }
+
+        @Override
+        public synchronized void completed() {
+            if (!received && err == null) {
+                err = new ApiDataException("Binary command completed without data");
+            }
+            complete = true;
+            notifyAll();
+        }
+
+        private byte[] getResult(int timeout) throws MikrotikApiException {
+            try {
+                synchronized (this) {
+                    int waitTime = timeout;
+                    while (!complete && waitTime > 0) {
+                        long start = System.currentTimeMillis();
+                        wait(waitTime);
+                        waitTime -= (int) (System.currentTimeMillis() - start);
+                    }
+                    if (!complete) {
+                        throw new ApiConnectionException(String.format("Command timed out after %d ms", timeout));
+                    }
+                }
+            } catch (InterruptedException ex) {
+                throw new ApiConnectionException(ex.getMessage(), ex);
+            }
+            if (err != null) {
+                throw err;
+            }
+            return data;
+        }
+
+        private byte[] data;
+        private MikrotikApiException err;
+        private boolean received;
+        private boolean complete;
     }
 
     private static class SyncListener implements ResultListener {
