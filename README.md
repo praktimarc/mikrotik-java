@@ -1,139 +1,172 @@
-# mikrotik-java 
+# mikrotik-java
 
-A Java client library implementation for the Mikrotik RouterOS API. 
+A maintained fork of [GideonLeGrange/mikrotik-java](https://github.com/GideonLeGrange/mikrotik-java), a Java client library for the MikroTik RouterOS API.
 
-This project provides a Java client to manipulate Mikrotik routers using the remote API. Simple things must be easy to do, and complex things must be possible.
+This fork keeps the existing Java API and package names compatible with upstream while allowing independently maintained fixes and releases for Praktimarc's own projects. It is not an official upstream release.
 
-## Versions
+## Fork status
 
-![Java CI with Maven](https://github.com/GideonLeGrange/mikrotik-java/workflows/Java%20CI%20with%20Maven/badge.svg)
+- Upstream base version: `3.0.8`
+- Current fork version: `3.0.8-praktimarc.1`
+- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`
+- Java packages remain unchanged: `me.legrange.mikrotik.*`
+- License: Apache License 2.0; original attribution is retained
 
-**The current stable version is 3.0.8**
+Fork releases use the upstream version plus a Praktimarc suffix:
 
-Version 3.0.8 fixes a null pointer error 
+```text
+3.0.8-praktimarc.1
+3.0.8-praktimarc.2
+...
+```
 
-### Changes in version 3.0:
+When the fork moves to a later upstream base, the fork counter restarts, for example `3.0.9-praktimarc.1`.
 
-Version 3.0 addresses the problems the API had around TLS encryption. The way secure connections are implemented is changed so that the user has complete control over the creation of TLS sockets. To this end:
-* A new method, `connect(SocketFactory fact, String host, int port, int timeout)`, was added to allow for better user control over sockets and especially encryption.
-* The `connectTLS()` API methods were removed. 
-* Most of the overloaded `connect()` methods were removed. 
-* Added a pre-built `jar` file to the downloads.
+The first fork release includes a fix for synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception.
 
-Further changes include:
-* The previously deprecated `disconnect()` method is removed. 
+## Getting the Praktimarc fork
 
-#### Versions 1.x and 2.x
+Release JARs are published on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases).
 
-Versions 1 and 2 are considered *obsolete* and will no longer be supported or patched. 
+A release contains the main JAR, source JAR, and Javadoc JAR. GitHub Releases are the initial distribution mechanism and do **not** by themselves provide a remote Maven repository.
 
-## Getting the API
+### Build and install locally with Maven
 
-Maven users can use the artifact from Maven Central with this dependency:
+Clone this repository and run:
+
+```bash
+mvn clean install
+```
+
+This builds, tests, and installs the fork into the local Maven repository.
+
+Projects on the same machine can then use:
 
 ```xml
 <dependency>
-  <groupId>me.legrange</groupId>
+  <groupId>io.github.praktimarc</groupId>
   <artifactId>mikrotik</artifactId>
-  <version>3.0.8</version>
+  <version>3.0.8-praktimarc.1</version>
 </dependency>
 ```
 
-You can also download the pre-built jar file, or a zip or tar.gz file with the source for the latest release [here](https://github.com/GideonLeGrange/mikrotik-java/releases/latest)
+Alternatively, after downloading the binary JAR from GitHub Releases, install it into the local Maven repository with:
 
-## Asking for help or contributing
+```bash
+mvn install:install-file \
+  -Dfile=mikrotik-3.0.8-praktimarc.1.jar \
+  -DgroupId=io.github.praktimarc \
+  -DartifactId=mikrotik \
+  -Dversion=3.0.8-praktimarc.1 \
+  -Dpackaging=jar
+```
 
-I welcome contributions, be it bug fixes or other improvements. 
+No Java import changes are required when switching from upstream. Existing imports such as `me.legrange.mikrotik.ApiConnection` remain valid.
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for information on how to contribute to this project.
+## Upstream project
+
+The original project is maintained by Gideon Le Grange at [GideonLeGrange/mikrotik-java](https://github.com/GideonLeGrange/mikrotik-java). Upstream remains the source for the original library design and public API. Suitable fixes from this fork may be contributed upstream separately from fork-specific release infrastructure.
+
+For upstream contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 # Using the API
 
-How to use the API is best illustrated by examples. 
+How to use the API is best illustrated by examples.
 
-These examples should illustrate how to use this library. Please note that I assume that the user is proficient in Java and understands the Mikrotik command line syntax. The command line syntax gives you an indication of what commands you can pass, but the RouterOS API used by this library does not support everyting. 
+These examples assume that the user is proficient in Java and understands the MikroTik command line syntax. The command line syntax gives an indication of what commands can be passed, but the RouterOS API used by this library does not support everything.
 
-Some things to consider when debugging your API calls are:
+Some things to consider when debugging API calls are:
 * The RouterOS API does not support auto-completion. You need to write out command and parameter names. For example, you can't say `/ip/hotspot/user/add name=john add=10.0.0.1`, you need to write out `address`.
-* You need to quote values with spaces in. You can't say `name=Joe Blogs`, you need to use `name="Joe Blogs"`
-* Exceptions with a root cause of `ApiCommandException` are errors received from the remote RouterOS device and contain the error message received. 
+* You need to quote values with spaces in. You can't say `name=Joe Blogs`, you need to use `name="Joe Blogs"`.
+* Exceptions with a root cause of `ApiCommandException` are errors received from the remote RouterOS device and contain the error message received.
 
 ## Opening a connection
-Here is a simple example: Connect to a router and reboot it. 
+
+Here is a simple example that connects to a router and reboots it:
 
 ```java
 ApiConnection con = ApiConnection.connect("10.0.1.1"); // connect to router
 con.login("admin","password"); // log in to router
 con.execute("/system/reboot"); // execute a command
-con.close(); // disconnect from router
+con.close(); // disconnect
 ```
-The above example shows a easy way of creating an unencrypted connection using the default API port and timeout, which is useful for development and testing.
+
+The example above creates an unencrypted connection using the default API port and timeout, which is useful for development and testing.
 
 ### TLS encryption
 
-For production environments, encrypting API traffic is recommended. To do this you need to open a TLS connection to the router by passing an instance of the `SocketFactory` you wish to use to construct the TLS socket to the API:
+For production environments, encrypting API traffic is recommended. Pass a `SocketFactory` to control TLS socket creation:
 
 ```java
-ApiConnection con = ApiConnection.connect(SSLSocketFactory.getDefault(), "10.0.1.1", ApiConnection.DEFAULT_TLS_PORT, ApiConnection.DEFAULT_CONNECTION_TIMEOUT);
+ApiConnection con = ApiConnection.connect(
+    SSLSocketFactory.getDefault(),
+    "10.0.1.1",
+    ApiConnection.DEFAULT_TLS_PORT,
+    ApiConnection.DEFAULT_CONNECTION_TIMEOUT);
 ```
 
-Above an instance of the default SSL socket factory is passed to the API. This will work as long as the router's certificate has been added to the local key store.  Besides allowing the user to specify the socket factory, the above method also gives full control over the TCP Port and connection timeout. 
-
-RouterOS also supports anonymous TLS. An example showing how to create a socket factory for anonymous TLS is `AnonymousSocketFactory` in the examples directory.
+The default SSL socket factory works when the router certificate has been added to the local key store. RouterOS also supports anonymous TLS; see the `AnonymousSocketFactory` example in the examples directory.
 
 ### Connection timeouts
 
-By default, the API will generate an exception if it cannot connect to the specified router. This can take place immediately (typically if the OS returns a 'Connection refused' error), but can also take up to 60 seconds if the router host is firewalled or if there are other network problems. This 60 seconds is the 'default connection timeout' an can be overridded by passing the preferred timeout to the APi as last parameter in a ```connect()``` call. For example:
+By default, the API generates an exception if it cannot connect to the specified router. A connection failure can be immediate, for example when the OS returns `Connection refused`, or can last until the configured connection timeout.
+
+Example with a two-second connection timeout:
 
 ```java
-   ApiConnection con = ApiConnection.connect(SSLSocketFactory.getDefault(), "10.0.1.1", ApiConnection.DEFAULT_TLS_PORT, 2000); // connect to router on the default API port and fail in 2 seconds
-```	
-
-### Constants
-Some constants are provided in `ApiConnection` to make it easier for users to construct connections with default ports and timeouts:
-
-Constant | Use for | Value 
----------|---------|------
-DEFAULT_PORT | Default TCP `port` value for unencrypyted connections | 8728
-DEFAULT_TLS_PORT | Default TCP `port` value for encrypyted connections | 8729
-DEFAULT_CONNECTION_TIMEOUT | Default connection `timeout` value (ms) | 60000
-
-### Try with resources 
-
-The API can also be used in a "try with resources" statement which will ensure that the connection is closed:
-
-```java
-        try (ApiConnection con = ApiConnection.connect(SocketFactory.getDefault(), Config.HOST, ApiConnection.DEFAULT_PORT, 2000)) {
-            con.login(Config.USERNAME, Config.PASSWORD);
-            con.execute("/user/add name=eric");
-        }
+ApiConnection con = ApiConnection.connect(
+    SSLSocketFactory.getDefault(),
+    "10.0.1.1",
+    ApiConnection.DEFAULT_TLS_PORT,
+    2000);
 ```
 
-In following examples the connection, login and disconnection code will not be repeated. In all cases it is assumed that an `ApiConnection` has been established, `login()` has been called, and that the connection is called `con`.
+### Constants
 
-## Reading data 
+Some constants are provided in `ApiConnection`:
 
-A simple example that returns a result - Print all interfaces:
+| Constant | Use for | Value |
+| --- | --- | ---: |
+| `DEFAULT_PORT` | Default TCP port for unencrypted connections | 8728 |
+| `DEFAULT_TLS_PORT` | Default TCP port for encrypted connections | 8729 |
+| `DEFAULT_CONNECTION_TIMEOUT` | Default connection timeout in milliseconds | 60000 |
 
+### Try with resources
+
+The API can be used in a try-with-resources statement to ensure that the connection is closed:
 
 ```java
-List<Map<String, String>> rs = con.execute("/interface/print");
-for (Map<String,String> r : rs) {
-  System.out.println(r);
+try (ApiConnection con = ApiConnection.connect(
+        SocketFactory.getDefault(), Config.HOST, ApiConnection.DEFAULT_PORT, 2000)) {
+    con.login(Config.USERNAME, Config.PASSWORD);
+    con.execute("/user/add name=eric");
 }
 ```
 
-Results are returned as a list of maps of String key/value pairs. The reason for this is that a command can return multiple results, which have multpile variables. For example, to print the names of all the interfaces returned in the command above, do:
+In the following examples, connection, login and disconnection code is omitted. It is assumed that an `ApiConnection` has been established, `login()` has been called, and the connection is named `con`.
+
+## Reading data
+
+Print all interfaces:
 
 ```java
-for (Map<String, String> map : rs) { 
-  System.out.println(map.get("name"));
+List<Map<String, String>> rs = con.execute("/interface/print");
+for (Map<String, String> r : rs) {
+    System.out.println(r);
+}
+```
+
+Results are returned as a list of maps of string key/value pairs. For example, to print the names of all returned interfaces:
+
+```java
+for (Map<String, String> map : rs) {
+    System.out.println(map.get("name"));
 }
 ```
 
 ### Filtering results
 
-The same query, but with the results filtered: Print all interfaces of type 'vlan'.
+Print all interfaces of type `vlan`:
 
 ```java
 List<Map<String, String>> rs = con.execute("/interface/print where type=vlan");
@@ -141,85 +174,69 @@ List<Map<String, String>> rs = con.execute("/interface/print where type=vlan");
 
 ### Selecting returned fields
 
-The same query, but we only want certain result fields names: Print all interfaces of type 'vlan' and return just their name:
+Return only interface names:
 
 ```java
 List<Map<String, String>> rs = con.execute("/interface/print where type=vlan return name");
 ```
 
-## Writing data 
+## Writing data
 
-Creating, modifying and deleting configuration objects is of course possible.
+Creating, modifying and deleting configuration objects is supported.
 
-### Creating an object 
-
-This example shows how to create a new GRE interface: 
+### Creating an object
 
 ```java
 con.execute("/interface/gre/add remote-address=192.168.1.1 name=gre1 keepalive=10");
 ```
 
-### Modify an existing object
-
-Change the IP address in the object created by the above example:
+### Modifying an existing object
 
 ```java
-con.execute("/interface/gre/set .id=gre1 remote-address=10.0.1.1"); 
+con.execute("/interface/gre/set .id=gre1 remote-address=10.0.1.1");
 ```
 
-### Remove an existing object
-
-And now remove the object:
+### Removing an existing object
 
 ```java
-con.execute("/interface/gre/remove .id=gre1"); 
+con.execute("/interface/gre/remove .id=gre1");
 ```
 
-### Un-setting a variable on an object 
+### Un-setting a variable on an object
 
-Un-setting a variable is a bit different, and you need to use a parameter called `value-name`. This isn't well documented. Let's say you have a firewall rule that was set up like this:
+Use the `value-name` parameter. For example, assuming a rule can be accessed as `.id=*1`:
 
 ```java
-con.execute("/ip/firewall/filter/add action=accept chain=forward time=00:00:01-01,mon")
-```
-Assuming the rule can be accessed as `.id=*1`, you un-set it by using `value-name` as seen below:
-
-```java 
 con.execute("/ip/firewall/filter/unset .id=*1 value-name=time");
 ```
 
 ## Asynchronous commands
 
-We can run some commands asynchronously in order to continue receiving updates:
-
-This example shows how to run '/interface wireless monitor' and have the result sent to a listener object, which prints it:
+Commands can run asynchronously with a `ResultListener`:
 
 ```java
-String tag = con.execute("/interface/wireless/monitor .id=wlan1 return signal-to-noise", 
-      new ResultListener() {
-
-            public void receive(Map<String, String> result) {
-                System.out.println(result);
-            }
-
-           public void error(MikrotikApiException e) {
-               System.out.println("An error occurred: " + e.getMessage());
-           }
-
-           public void completed() {
-                System.out.println("Asynchronous command has finished"); 
-           }
-            
+String tag = con.execute("/interface wireless monitor .id=wlan1 return signal-to-noise",
+    new ResultListener() {
+        public void receive(Map<String, String> result) {
+            System.out.println(result);
         }
-  );
+
+        public void error(MikrotikApiException e) {
+            System.out.println("An error occurred: " + e.getMessage());
+        }
+
+        public void completed() {
+            System.out.println("Asynchronous command has finished");
+        }
+    });
 ```
 
-The `ResultListener` interface has three methods the user needs to implement:
-* `receive()` is called to receive results produced by the router from the API. 
-* `error()` is called when an exception is raised based on a 'trap' received from the router or another (typically connection) problem.
-* `completed()` is called when the router has indicated that the command has completed or has been cancelled. 
+`ResultListener` provides three callbacks:
+* `receive()` receives results produced by the router.
+* `error()` is called when an exception is raised, including a RouterOS trap or connection problem.
+* `completed()` is called when the router indicates that the command has completed or has been cancelled.
 
-The above command will run and send results asynchronously as they become available, until it is canceled. The command (identified by the unique String returned) is canceled like this:
+Cancel the command by its returned tag:
 
 ```java
 con.cancel(tag);
@@ -227,24 +244,21 @@ con.cancel(tag);
 
 ## Command timeouts
 
-Command timeouts can be used to make sure that synchronous commands either return or fail within a specific time. Command timeouts are separate from the connection timeout used in ```connect()```, and can be set using ```setTimeout()```. Here is an example:
+Command timeouts ensure that synchronous commands either return or fail within a configured time. They are separate from the connection timeout used in `connect()` and can be set with `setTimeout()`:
 
 ```java
-ApiConnection con = ApiConnection.connect("10.0.1.1"); // connect to router
-con.setTimeout(5000); // set command timeout to 5 seconds
-con.login("admin","password"); // log in to router
-con.execute("/system/reboot"); // execute a command
-``` 
- 	
-It is important to note that command timeouts can be set before ```login()``` is called, and can therefore influence the behaviour of login. 
+ApiConnection con = ApiConnection.connect("10.0.1.1");
+con.setTimeout(5000);
+con.login("admin", "password");
+con.execute("/system/reboot");
+```
 
-The default command timeout, if none is set by the user, is 60 seconds. 
+Command timeouts can be set before `login()` and therefore also affect login behavior. The default command timeout is 60 seconds.
 
 # References
 
-The RouterOS API is documented here: http://wiki.mikrotik.com/wiki/Manual:API
+The RouterOS API is documented in the [MikroTik RouterOS API documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/47579160/API).
 
-# Licence
+# License
 
-This library is released under the Apache 2.0 licence. See the [LICENCE.md](LICENCE.md) file
-
+This library is released under the Apache License 2.0. See [LICENCE.md](LICENCE.md).
