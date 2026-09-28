@@ -7,12 +7,12 @@
     <version>9</version> 
   </parent>  
   <modelVersion>4.0.0</modelVersion>  
-  <groupId>me.legrange</groupId>  
+  <groupId>io.github.praktimarc</groupId>  
   <artifactId>mikrotik</artifactId>  
-  <version>3.0.8</version>  
+  <version>3.0.8-praktimarc.1</version>  
   <packaging>jar</packaging>  
   <name>Mikrotik API Java Client Library</name>  
-  <url>https://github.com/GideonLeGrange/mikrotik-java</url>  
+  <url>https://github.com/praktimarc/mikrotik-java</url>  
   <licenses> 
     <license> 
       <name>The Apache Software License, Version 2.0</name>  
@@ -21,9 +21,9 @@
     </license> 
   </licenses>  
   <scm> 
-    <url>git@github.com:GideonLeGrange/mikrotik-java.git</url>  
-    <connection>scm:git:git@github.com:GideonLeGrange/mikrotik-java.git</connection>  
-    <developerConnection>scm:git:git@github.com:GideonLeGrange/mikrotik-java.git</developerConnection> 
+    <url>https://github.com/praktimarc/mikrotik-java</url>  
+    <connection>scm:git:https://github.com/praktimarc/mikrotik-java.git</connection>  
+    <developerConnection>scm:git:git@github.com:praktimarc/mikrotik-java.git</developerConnection> 
   </scm>  
   <build> 
     <plugins> 
@@ -46,8 +46,8 @@
             <id>default-jar</id>  
             <phase>package</phase>  
             <goals> 
-              <goal>jar</goal> 
-            </goals>  
+              <goal>jar</goal>  
+            </goals> 
             <configuration> 
               <excludes> 
                 <exclude>**/examples</exclude>  
@@ -65,7 +65,7 @@
           <execution> 
             <id>attach-sources</id>  
             <goals> 
-              <goal>jar</goal> 
+              <goal>jar</goal>  
             </goals> 
           </execution> 
         </executions> 
@@ -76,12 +76,12 @@
         <version>2.9.1</version>  
         <configuration> 
           <excludePackageNames>example;*.impl</excludePackageNames> 
-        </configuration>  
+        </configuration> 
         <executions> 
           <execution> 
             <id>attach-javadocs</id>  
             <goals> 
-              <goal>jar</goal> 
+              <goal>jar</goal>  
             </goals> 
           </execution> 
         </executions> 
@@ -101,7 +101,7 @@
               <execution> 
                 <id>attach-sources</id>  
                 <goals> 
-                  <goal>jar</goal> 
+                  <goal>jar</goal>  
                 </goals> 
               </execution> 
             </executions> 
@@ -114,7 +114,7 @@
               <execution> 
                 <id>attach-javadocs</id>  
                 <goals> 
-                  <goal>jar</goal> 
+                  <goal>jar</goal>  
                 </goals> 
               </execution> 
             </executions> 
@@ -128,7 +128,7 @@
                 <id>sign-artifacts</id>  
                 <phase>verify</phase>  
                 <goals> 
-                  <goal>sign</goal> 
+                  <goal>sign</goal>  
                 </goals> 
               </execution> 
             </executions> 
@@ -149,7 +149,7 @@
       <distributionManagement> 
         <snapshotRepository> 
           <id>ossrh</id>  
-          <url>https://oss.sonatype.org/content/repositories/snapshots</url> 
+          <url>https://oss.sonatype.org/content/repositories/snapshots</url>  
         </snapshotRepository> 
       </distributionManagement> 
     </profile> 
