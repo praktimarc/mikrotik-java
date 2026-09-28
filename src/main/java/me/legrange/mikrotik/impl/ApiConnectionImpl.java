@@ -8,7 +8,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
-import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -177,7 +176,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     private int timeout = ApiConnection.DEFAULT_COMMAND_TIMEOUT;
 
     /**
-     * thread to read data from the socket and process it into Strings
+     * Thread to read complete raw RouterOS sentences from the socket.
      */
     private class Reader extends Thread {
 
@@ -185,7 +184,7 @@ public final class ApiConnectionImpl extends ApiConnection {
             super("Mikrotik API Reader");
         }
 
-        private String take() throws ApiConnectionException, ApiDataException {
+        private RawSentence take() throws ApiConnectionException, ApiDataException {
             Object val;
             try {
                 val = queue.take();
@@ -197,19 +196,14 @@ public final class ApiConnectionImpl extends ApiConnection {
             } else if (val instanceof ApiDataException) {
                 throw (ApiDataException) val;
             }
-            return (String) val;
-        }
-
-        private boolean isEmpty() {
-            return queue.isEmpty();
+            return (RawSentence) val;
         }
 
         @Override
         public void run() {
             while (connected) {
                 try {
-                    String s = Util.decode(in);
-                    put(s);
+                    put(new RawSentence(Util.readSentence(in)));
                 } catch (ApiDataException ex) {
                     put(ex);
                 } catch (ApiConnectionException ex) {
@@ -227,11 +221,11 @@ public final class ApiConnectionImpl extends ApiConnection {
             }
         }
 
-        private final LinkedBlockingQueue queue = new LinkedBlockingQueue(40);
+        private final LinkedBlockingQueue<Object> queue = new LinkedBlockingQueue<>(40);
     }
 
     /**
-     * Thread to take the received strings and process it into Result objects
+     * Thread to turn raw sentences into existing response objects and listeners.
      */
     private class Processor extends Thread {
 
@@ -242,196 +236,35 @@ public final class ApiConnectionImpl extends ApiConnection {
         @Override
         public void run() {
             while (connected) {
-                Response res;
                 try {
-                    res = unpack();
-                } catch (ApiCommandException ex) {
-                    String tag = ex.getTag();
-                    if (tag != null) {
-                        res = new Error(tag, ex.getMessage(), ex.getCategory());
-                    } else {
-                        continue;
-                    }
+                    dispatch(reader.take().toTextResponse());
                 } catch (MikrotikApiException ex) {
-                    continue;
-                }
-                if (res.getTag() != null) {
-                    ResultListener l = listeners.get(res.getTag());
-                    if (l != null) {
-                        if (res instanceof Result) {
-                            l.receive((Result) res);
-                        } else if (res instanceof Done) {
-                            if (l instanceof SyncListener) {
-                                ((SyncListener) l).completed((Done) res);
-                            } else {
-                                l.completed();
-                            }
-                            listeners.remove(res.getTag());
-                        } else if (res instanceof Error) {
-                            l.error(new ApiCommandException((Error) res));
-                        }
-                    }
-                } else {
-                    nextTag();
+                    // Preserve existing behavior: malformed/unroutable responses are ignored.
                 }
             }
         }
 
-        private void nextLine() throws ApiConnectionException, ApiDataException {
-            if (lines.isEmpty()) {
-                String block = reader.take();
-                String[] parts = block.split("\n");
-                lines.addAll(Arrays.asList(parts));
-            }
-            line = lines.remove(0);
-        }
-
-        private boolean hasNextLine() {
-            return !lines.isEmpty() || !reader.isEmpty();
-        }
-
-        private String peekLine() throws ApiConnectionException, ApiDataException {
-            if (lines.isEmpty()) {
-                String block = reader.take();
-                String[] parts = block.split("\n");
-                lines.addAll(Arrays.asList(parts));
-            }
-            return lines.get(0);
-        }
-
-        private Response unpack() throws MikrotikApiException {
-            if (line == null) {
-                nextLine();
-            }
-            switch (line) {
-                case "!re":
-                    return unpackRe();
-                case "!done":
-                    return unpackDone();
-                case "!trap":
-                case "!halt":
-                    return unpackError();
-                case "":
-                default:
-                    throw new ApiDataException(String.format("Unexpected line '%s'", line));
-            }
-        }
-
-        private Result unpackRe() throws ApiDataException, ApiConnectionException {
-            nextLine();
-            Result res = new Result();
-            while (!line.startsWith(("!"))) {
-                if (line.startsWith(("="))) {
-                    String[] parts = line.split("=", 3);
-                    if (parts.length == 3) {
-                        if (!parts[2].endsWith("\r")) {
-                            res.put(parts[1], unpackResult(parts[2]));
+        private void dispatch(Response res) {
+            if (res.getTag() != null) {
+                ResultListener l = listeners.get(res.getTag());
+                if (l != null) {
+                    if (res instanceof Result) {
+                        l.receive((Result) res);
+                    } else if (res instanceof Done) {
+                        if (l instanceof SyncListener) {
+                            ((SyncListener) l).completed((Done) res);
                         } else {
-                            final StringBuilder sb = new StringBuilder();
-                            sb.append(parts[2]);
-                            while (!lines.isEmpty()) {
-                                nextLine();
-                                sb.append(line);
-                            }
-                            res.put(parts[1], sb.toString());
+                            l.completed();
                         }
-                    } else {
-                        throw new ApiDataException(String.format("Malformed line '%s'", line));
+                        listeners.remove(res.getTag());
+                    } else if (res instanceof Error) {
+                        l.error(new ApiCommandException((Error) res));
                     }
-                } else if (line.startsWith(".tag=")) {
-                    String[] parts = line.split("=", 2);
-                    if (parts.length == 2) {
-                        res.setTag(parts[1]);
-                    }
-                } else {
-                    throw new ApiDataException(String.format("Unexpected line '%s'", line));
                 }
-                if (hasNextLine()) {
-                    nextLine();
-                } else {
-                    line = null;
-                    break;
-                }
+            } else {
+                nextTag();
             }
-            return res;
         }
-
-        private String unpackResult(String first) throws ApiConnectionException, ApiDataException {
-            StringBuilder buf = new StringBuilder(first);
-            line = null;
-
-            while (hasNextLine()) {
-                String peek = peekLine();
-                if (!(peek.startsWith("!") || peek.startsWith("=") || peek.startsWith(".tag="))) {
-                    nextLine();
-                    buf.append("\n");
-                    buf.append(line);
-                } else {
-                    break;
-                }
-            }
-            return buf.toString();
-        }
-
-        private Done unpackDone() throws MikrotikApiException {
-            Done done = new Done(null);
-            if (hasNextLine()) {
-                nextLine();
-
-                while (!line.startsWith("!")) {
-                    if (line.startsWith(".tag=")) {
-                        String[] parts = line.split("=", 2);
-                        if (parts.length == 2) {
-                            done.setTag(parts[1]);
-                        }
-                    } else if (line.startsWith(("=ret"))) {
-                        String[] parts = line.split("=", 3);
-                        if (parts.length == 3) {
-                            done.setHash(parts[2]);
-                        } else {
-                            throw new ApiDataException(String.format("Malformed line '%s'", line));
-                        }
-                    }
-                    if (hasNextLine()) {
-                        nextLine();
-                    } else {
-                        line = null;
-                        break;
-                    }
-                }
-            }
-            return done;
-        }
-
-        private Error unpackError() throws MikrotikApiException {
-            nextLine();
-            Error err = new Error();
-            if (hasNextLine()) {
-                while (!line.startsWith("!")) {
-                    if (line.startsWith(".tag=")) {
-                        String[] parts = line.split("=", 2);
-                        if (parts.length == 2) {
-                            err.setTag(parts[1]);
-                        }
-                    } else if (line.startsWith("=message=")) {
-                        err.setMessage(line.split("=", 3)[2]);
-                    }
-                    else if (line.startsWith("=category=")) {
-                        err.setCategory(Integer.parseInt(line.split("=", 3)[2]));
-                    }
-                    if (hasNextLine()) {
-                        nextLine();
-                    } else {
-                        line = null;
-                        break;
-                    }
-                }
-            }
-            return err;
-        }
-
-        private final List<String> lines = new LinkedList<>();
-        private String line;
     }
 
     private static class SyncListener implements ResultListener {
