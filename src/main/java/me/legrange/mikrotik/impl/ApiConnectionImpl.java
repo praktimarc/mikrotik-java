@@ -8,6 +8,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -82,6 +83,30 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
+    public long downloadFile(String remoteFile, Path localFile) throws MikrotikApiException, IOException {
+        if (remoteFile == null) {
+            throw new NullPointerException("remoteFile");
+        }
+        if (localFile == null) {
+            throw new NullPointerException("localFile");
+        }
+        if (remoteFile.trim().isEmpty()) {
+            throw new IllegalArgumentException("Remote file must not be blank");
+        }
+        return FileDownload.download(localFile, new FileDownload.Source() {
+            @Override
+            public long size() throws MikrotikApiException {
+                return getRemoteFileSize(remoteFile);
+            }
+
+            @Override
+            public byte[] read(long offset, int chunkSize) throws MikrotikApiException {
+                return readFileChunk(remoteFile, offset, chunkSize);
+            }
+        });
+    }
+
+    @Override
     public void cancel(String tag) throws MikrotikApiException {
         execute(String.format("/cancel tag=%s", tag));
     }
@@ -151,6 +176,44 @@ public final class ApiConnectionImpl extends ApiConnection {
         } finally {
             binaryListeners.remove(tag);
         }
+    }
+
+    private long getRemoteFileSize(String remoteFile) throws MikrotikApiException {
+        Command cmd = new Command("/file/print");
+        cmd.addProperty("size");
+        cmd.addQuery("?name=" + remoteFile);
+        List<Map<String, String>> results = execute(cmd, timeout);
+        if (results.size() != 1) {
+            throw new ApiDataException("Expected exactly one RouterOS file named '" + remoteFile
+                    + "' but found " + results.size());
+        }
+        String value = results.get(0).get("size");
+        if (value == null) {
+            throw new ApiDataException("RouterOS file response contains no size");
+        }
+        try {
+            long size = Long.parseLong(value);
+            if (size < 0) {
+                throw new ApiDataException("RouterOS file size must not be negative");
+            }
+            return size;
+        } catch (NumberFormatException ex) {
+            throw new ApiDataException("Invalid RouterOS file size '" + value + "'", ex);
+        }
+    }
+
+    private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotikApiException {
+        if (offset < 0) {
+            throw new ApiDataException("File offset must not be negative");
+        }
+        if (chunkSize < 1 || chunkSize > FileDownload.CHUNK_SIZE) {
+            throw new ApiDataException("File read chunk size must be between 1 and " + FileDownload.CHUNK_SIZE);
+        }
+        Command cmd = new Command("/file/read");
+        cmd.addParameter("file", remoteFile);
+        cmd.addParameter("offset", Long.toString(offset));
+        cmd.addParameter("chunk-size", Integer.toString(chunkSize));
+        return executeBinaryRead(cmd, timeout);
     }
 
     private ApiConnectionImpl() {
