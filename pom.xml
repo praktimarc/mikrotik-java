@@ -45,8 +45,8 @@
             <id>default-jar</id>  
             <phase>package</phase>  
             <goals> 
-              <goal>jar</goal> 
-            </goals>  
+              <goal>jar</goal>  
+            </goals> 
             <configuration> 
               <excludes> 
                 <exclude>**/examples</exclude>  
@@ -64,7 +64,7 @@
           <execution> 
             <id>attach-sources</id>  
             <goals> 
-              <goal>jar</goal> 
+              <goal>jar</goal>  
             </goals> 
           </execution> 
         </executions> 
@@ -75,12 +75,12 @@
         <version>2.9.1</version>  
         <configuration> 
           <excludePackageNames>example;*.impl</excludePackageNames> 
-        </configuration>  
+        </configuration> 
         <executions> 
           <execution> 
             <id>attach-javadocs</id>  
             <goals> 
-              <goal>jar</goal> 
+              <goal>jar</goal>  
             </goals> 
           </execution> 
         </executions> 
@@ -100,7 +100,7 @@
               <execution> 
                 <id>attach-sources</id>  
                 <goals> 
-                  <goal>jar</goal> 
+                  <goal>jar</goal>  
                 </goals> 
               </execution> 
             </executions> 
@@ -113,7 +113,7 @@
               <execution> 
                 <id>attach-javadocs</id>  
                 <goals> 
-                  <goal>jar</goal> 
+                  <goal>jar</goal>  
                 </goals> 
               </execution> 
             </executions> 
@@ -127,7 +127,7 @@
                 <id>sign-artifacts</id>  
                 <phase>verify</phase>  
                 <goals> 
-                  <goal>sign</goal> 
+                  <goal>sign</goal>  
                 </goals> 
               </execution> 
             </executions> 
@@ -148,7 +148,7 @@
       <distributionManagement> 
         <snapshotRepository> 
           <id>ossrh</id>  
-          <url>https://oss.sonatype.org/content/repositories/snapshots</url> 
+          <url>https://oss.sonatype.org/content/repositories/snapshots</url>  
         </snapshotRepository> 
       </distributionManagement> 
     </profile> 
@@ -162,6 +162,6 @@
       <artifactId>junit</artifactId>  
       <version>4.13.1</version>  
       <scope>test</scope> 
-    </dependency> 
+    </dependency>  
   </dependencies> 
 </project>
