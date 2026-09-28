@@ -9,8 +9,8 @@ This fork keeps the existing Java API and package names compatible with upstream
 ![Java CI with Maven](https://github.com/praktimarc/mikrotik-java/actions/workflows/maven.yml/badge.svg)
 
 - Upstream base version: `3.0.8`
-- Current fork version: `3.0.8-praktimarc.1`
-- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.1`
+- Current fork version: `3.0.8-praktimarc.2`
+- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.2`
 - Java packages remain unchanged: `me.legrange.mikrotik.*`
 - Java baseline: Java 11; builds require JDK 11 or newer
 - License: Apache License 2.0; original attribution is retained
@@ -25,7 +25,7 @@ Fork releases use the upstream version plus a Praktimarc suffix:
 
 When the fork moves to a later upstream base, the fork counter restarts, for example `3.0.9-praktimarc.1`.
 
-The first fork release includes a fix for synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception.
+The first fork release includes a fix for synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception. The second fork release adds binary-safe RouterOS file downloads over the existing native API connection.
 
 ## Getting the Praktimarc fork
 
@@ -51,7 +51,7 @@ Projects on the same machine can then use:
 <dependency>
   <groupId>io.github.praktimarc</groupId>
   <artifactId>mikrotik</artifactId>
-  <version>3.0.8-praktimarc.1</version>
+  <version>3.0.8-praktimarc.2</version>
 </dependency>
 ```
 
@@ -59,14 +59,30 @@ Alternatively, after downloading the binary JAR from GitHub Releases, install it
 
 ```bash
 mvn install:install-file \
-  -Dfile=mikrotik-3.0.8-praktimarc.1.jar \
+  -Dfile=mikrotik-3.0.8-praktimarc.2.jar \
   -DgroupId=io.github.praktimarc \
   -DartifactId=mikrotik \
-  -Dversion=3.0.8-praktimarc.1 \
+  -Dversion=3.0.8-praktimarc.2 \
   -Dpackaging=jar
 ```
 
 No Java import changes are required when switching from upstream. Existing imports such as `me.legrange.mikrotik.ApiConnection` remain valid.
+
+## Binary-safe file downloads
+
+`3.0.8-praktimarc.2` adds `ApiConnection.downloadFile()` for downloading arbitrary RouterOS files without converting the file payload to text. The initial implementation requires RouterOS 7.13 or newer and uses `/file/read` with chunks of at most 32768 bytes over the already authenticated native API connection.
+
+```java
+long bytes = con.downloadFile(
+        "flash/docsis/cm123456.cfg",
+        Path.of("/srv/docsis/cm123456.cfg"));
+```
+
+The returned `long` is the completed byte count. Binary payload bytes are kept out of the text-oriented `String` result path, so NUL bytes, invalid UTF-8 sequences, and arbitrary compiled data are preserved unchanged.
+
+Before transfer, an existing final target and stale sibling `.part` file are removed. The download is written only to the `.part` file, its final byte count is validated, and only then is it moved to the requested target name. If the transfer or validation fails, the final target and `.part` file are removed best-effort and the operation reports failure instead of publishing stale or partial data.
+
+The existing `execute()` methods remain text-oriented and keep their existing `Map<String, String>` behavior. Binary upload and a RouterOS pre-7.13 small-file fallback are not included in this release.
 
 ## Upstream project
 

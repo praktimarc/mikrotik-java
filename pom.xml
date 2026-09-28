@@ -9,7 +9,7 @@
   <modelVersion>4.0.0</modelVersion>  
   <groupId>io.github.praktimarc</groupId>  
   <artifactId>mikrotik</artifactId>  
-  <version>3.0.8-praktimarc.1</version>  
+  <version>3.0.8-praktimarc.2</version>  
   <packaging>jar</packaging>  
   <name>Mikrotik API Java Client Library</name>  
   <url>https://github.com/praktimarc/mikrotik-java</url>  
