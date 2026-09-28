@@ -25,9 +25,9 @@ RouterOS 7.13+ provides `/file/read` with offset-based reads and a maximum chunk
 3. Preserve every downloaded payload byte exactly.
 4. Support files larger than the legacy `contents` size limit by using `/file/read` chunking.
 5. Stream data to disk instead of buffering the complete file in memory.
-6. Ensure a failed download never leaves an old or incomplete file under the final target name.
+6. Ensure a failed download never publishes an old or incomplete file as a successful new result.
 7. Keep all existing text-based `execute()` behavior backward compatible.
-8. Build the internal raw-word transport so a future binary upload feature is not architecturally blocked.
+8. Build the internal raw-word boundary so a future binary upload feature is not architecturally blocked.
 
 ## Non-goals
 
@@ -38,6 +38,7 @@ The first implementation will not:
 - provide resume support;
 - implement a RouterOS <7.13 fallback;
 - expose arbitrary raw protocol access as a new general-purpose public API;
+- add unused binary-upload production code;
 - change existing Java packages;
 - change Maven coordinates;
 - change normal `execute()` return types or `ResultListener` semantics.
@@ -67,16 +68,17 @@ No charset is accepted or implied by this method. The remote file is treated onl
 
 ## Local file semantics
 
-The final target path must never refer to stale or partial data.
+The final target path must never be accepted as a successful result when it contains stale or partial data.
 
 For target `file.cfg`, the implementation uses a sibling temporary path such as `file.cfg.part`.
 
 Before the transfer starts:
 
 1. delete an existing final target file;
-2. delete an existing `.part` file.
+2. delete an existing `.part` file;
+3. if either required deletion fails, abort before transferring any payload and propagate the filesystem error.
 
-During transfer, only the `.part` file exists.
+During transfer, only the `.part` file is written.
 
 On successful completion:
 
@@ -85,12 +87,13 @@ On successful completion:
 3. verify the local `.part` size;
 4. move the `.part` file to the final target path, using an atomic move when the local filesystem supports it and a normal move fallback otherwise.
 
-On any failure, both the final target and `.part` file are removed best-effort before the original exception is propagated.
+On any transfer or validation failure, both the final target and `.part` file are removed best-effort before the original exception is propagated. If the operating system itself prevents cleanup, the method must still fail and must never report the download as successful; cleanup failures may be attached as suppressed exceptions where practical.
 
-Therefore the postcondition is intentionally simple:
+Therefore the normal postcondition is intentionally simple:
 
 - success: exactly one complete new final file exists;
-- failure: neither an old final file nor an incomplete `.part` file remains.
+- failure with successful cleanup: neither an old final file nor an incomplete `.part` file remains;
+- failure because the filesystem prevents deletion/cleanup: no success is reported, and the filesystem error remains visible to the caller.
 
 ## Why the existing string decoder cannot be used
 
@@ -201,6 +204,8 @@ The primary RouterOS 7.13+ path is:
 13. rename `.part` to the final target;
 14. return the byte count.
 
+A zero-byte remote file is valid: the transfer loop is skipped, the empty `.part` file is size-verified, and it becomes the final file.
+
 The offset is always based on raw byte count, never `String.length()` or character count.
 
 The implementation should not assume that every non-final chunk has exactly 32768 bytes. It uses the actual received payload length and the expected remote size as the termination condition.
@@ -253,7 +258,7 @@ Existing login, command tags, cancellation, synchronous timeout handling, asynch
 
 ### 1. Raw word codec tests
 
-Verify exact round-trip handling of API words with payloads containing all byte values `0x00` through `0xFF`.
+Verify exact handling of raw API words with payloads containing all byte values `0x00` through `0xFF`.
 
 Test RouterOS word-length boundaries, especially around the protocol encoding transitions already handled by the library.
 
@@ -277,7 +282,7 @@ assertArrayEquals(sourceBytes, Files.readAllBytes(downloadedFile));
 
 ### 3. Multi-chunk behavior
 
-Verify offsets are advanced by actual byte counts and that final partial chunks are handled correctly.
+Verify offsets are advanced by actual byte counts, zero-byte files are supported, and final partial chunks are handled correctly.
 
 ### 4. Failure cleanup
 
@@ -285,6 +290,7 @@ Cover at least:
 
 - pre-existing final file;
 - stale `.part` file;
+- inability to delete an existing target;
 - API error after one or more chunks;
 - connection failure mid-transfer;
 - zero-progress response;
@@ -293,7 +299,7 @@ Cover at least:
 - local write failure where testable;
 - final size mismatch.
 
-Every failure case must leave no final file and no `.part` file.
+When cleanup is permitted by the test filesystem, every transfer failure case must leave no final file and no `.part` file.
 
 ### 5. Existing API regression tests
 
@@ -309,7 +315,7 @@ DOCSIS configuration files should then be tested as the intended production case
 
 The feature does not open any additional network service or firewall path. It uses the same authenticated RouterOS API connection already used by the application.
 
-Remote filenames are command parameters and must be passed through the existing command model/parser safely rather than created through unsafe string concatenation if filenames can contain spaces or other special characters.
+Remote filenames are command parameters and must be passed through the existing command model safely rather than created through unsafe string concatenation if filenames can contain spaces or other special characters.
 
 Local path authorization and directory ownership remain the responsibility of the calling application. `downloadFile()` must not attempt to create privileged directories or weaken filesystem permissions.
 
@@ -323,16 +329,16 @@ The fallback is deliberately outside this design's implementation scope so that 
 
 ## Future direction: upload and edit workflows
 
-The raw-word transport should be designed as a bidirectional protocol capability even though only download is public in this release.
+The raw-word boundary introduced for downloads must remain suitable for a later bidirectional protocol extension, even though only raw receive handling is required by this release.
 
-Conceptually the internal layer should permit both:
+Conceptually the long-term internal layer should permit both:
 
 ```text
 Router -> raw byte[] words -> application
 application -> raw byte[] words -> Router
 ```
 
-This prevents the download implementation from hard-coding a receive-only representation that would later require another transport rewrite.
+The current implementation should therefore avoid receive-side abstractions that would make a future `writeWord(byte[])` or binary command parameter path require another transport redesign. It does not, however, add unused raw-write or upload production code merely for symmetry.
 
 A future workflow may therefore become:
 
@@ -347,8 +353,6 @@ Router
 ```
 
 No public `uploadFile()` method is added now because RouterOS currently lacks a documented large-file chunk-write counterpart equivalent to `/file/read`. Small-file upload through `contents` may be investigated separately, but binary safety must be proven explicitly before it is supported.
-
-The current feature must therefore provide reusable raw-word encode/decode primitives without pretending that a complete large-file upload protocol already exists.
 
 ## Documentation impact
 
