@@ -1,0 +1,68 @@
+name: Praktimarc GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*-praktimarc.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Verify tag matches Maven version
+        shell: bash
+        run: |
+          VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Maven version ${VERSION}." >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Verify and package with Maven
+        run: mvn -B clean verify --file pom.xml
+
+      - name: Verify release artifacts
+        shell: bash
+        run: |
+          for file in \
+            "target/mikrotik-${VERSION}.jar" \
+            "target/mikrotik-${VERSION}-sources.jar" \
+            "target/mikrotik-${VERSION}-javadoc.jar"
+          do
+            if [ ! -f "${file}" ]; then
+              echo "Missing release artifact: ${file}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          files=(
+            "target/mikrotik-${VERSION}.jar"
+            "target/mikrotik-${VERSION}-sources.jar"
+            "target/mikrotik-${VERSION}-javadoc.jar"
+          )
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
