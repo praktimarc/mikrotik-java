@@ -80,6 +80,8 @@ long bytes = con.downloadFile(
 
 The returned `long` is the completed byte count. Binary payload bytes are kept out of the text-oriented `String` result path, so NUL bytes, invalid UTF-8 sequences, and arbitrary compiled data are preserved unchanged.
 
+The binary-safe path has also been validated against a real RouterOS device with both a small configuration file and an approximately 130 kB binary file.
+
 Before transfer, an existing final target and stale sibling `.part` file are removed. The download is written only to the `.part` file, its final byte count is validated, and only then is it moved to the requested target name. If the transfer or validation fails, the final target and `.part` file are removed best-effort and the operation reports failure instead of publishing stale or partial data.
 
 The existing `execute()` methods remain text-oriented and keep their existing `Map<String, String>` behavior. Binary upload and a RouterOS pre-7.13 small-file fallback are not included in this release.
@@ -258,9 +260,9 @@ String tag = con.execute("/interface/wireless/monitor .id=wlan1 return signal-to
 ```
 
 The `ResultListener` interface has three methods the user needs to implement:
-* `receive()` is called to receive results produced by the router from the API. 
-* `error()` is called when an exception is raised based on a 'trap' received from the router or another (typically connection) problem.
-* `completed()` is called when the router has indicated that the command has completed or has been cancelled. 
+* The `receive()` method is invoked when the API receives a result from the router.
+* The `completed()` method is invoked when the API receives the final `!done` response from the router.
+* The `error()` method is invoked when the API receives a `!trap` or other API error.
 
 The above command will run and send results asynchronously as they become available, until it is canceled. The command (identified by the unique String returned) is canceled like this:
 
