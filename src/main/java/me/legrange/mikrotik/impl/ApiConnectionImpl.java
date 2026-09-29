@@ -8,6 +8,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
@@ -82,6 +83,30 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
+    public long downloadFile(String remoteFile, Path localFile) throws MikrotikApiException, IOException {
+        if (remoteFile == null) {
+            throw new NullPointerException("remoteFile");
+        }
+        if (localFile == null) {
+            throw new NullPointerException("localFile");
+        }
+        if (remoteFile.trim().isEmpty()) {
+            throw new IllegalArgumentException("Remote file must not be blank");
+        }
+        return FileDownload.download(localFile, new FileDownload.Source() {
+            @Override
+            public long size() throws MikrotikApiException {
+                return getRemoteFileSize(remoteFile);
+            }
+
+            @Override
+            public byte[] read(long offset, int chunkSize) throws MikrotikApiException {
+                return readFileChunk(remoteFile, offset, chunkSize);
+            }
+        });
+    }
+
+    @Override
     public void cancel(String tag) throws MikrotikApiException {
         execute(String.format("/cancel tag=%s", tag));
     }
@@ -132,8 +157,68 @@ public final class ApiConnectionImpl extends ApiConnection {
         return tag;
     }
 
+    private byte[] executeBinaryRead(Command cmd, int timeout) throws MikrotikApiException {
+        SyncBinaryListener l = new SyncBinaryListener();
+        String tag = nextTag();
+        cmd.setTag(tag);
+        binaryListeners.put(tag, l);
+        try {
+            Util.write(cmd, out);
+        } catch (UnsupportedEncodingException ex) {
+            binaryListeners.remove(tag);
+            throw new ApiDataException(ex.getMessage(), ex);
+        } catch (IOException ex) {
+            binaryListeners.remove(tag);
+            throw new ApiConnectionException(ex.getMessage(), ex);
+        }
+        try {
+            return l.getResult(timeout);
+        } finally {
+            binaryListeners.remove(tag);
+        }
+    }
+
+    private long getRemoteFileSize(String remoteFile) throws MikrotikApiException {
+        Command cmd = new Command("/file/print");
+        cmd.addProperty("size");
+        cmd.addQuery("?name=" + remoteFile);
+        List<Map<String, String>> results = execute(cmd, timeout);
+        if (results.size() != 1) {
+            throw new ApiDataException("Expected exactly one RouterOS file named '" + remoteFile
+                    + "' but found " + results.size());
+        }
+        String value = results.get(0).get("size");
+        if (value == null) {
+            throw new ApiDataException("RouterOS file response contains no size");
+        }
+        try {
+            long size = Long.parseLong(value);
+            if (size < 0) {
+                throw new ApiDataException("RouterOS file size must not be negative");
+            }
+            return size;
+        } catch (NumberFormatException ex) {
+            throw new ApiDataException("Invalid RouterOS file size '" + value + "'", ex);
+        }
+    }
+
+    private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotikApiException {
+        if (offset < 0) {
+            throw new ApiDataException("File offset must not be negative");
+        }
+        if (chunkSize < 1 || chunkSize > FileDownload.CHUNK_SIZE) {
+            throw new ApiDataException("File read chunk size must be between 1 and " + FileDownload.CHUNK_SIZE);
+        }
+        Command cmd = new Command("/file/read");
+        cmd.addParameter("file", remoteFile);
+        cmd.addParameter("offset", Long.toString(offset));
+        cmd.addParameter("chunk-size", Integer.toString(chunkSize));
+        return executeBinaryRead(cmd, timeout);
+    }
+
     private ApiConnectionImpl() {
         this.listeners = new ConcurrentHashMap<>();
+        this.binaryListeners = new ConcurrentHashMap<>();
     }
 
     /**
@@ -173,11 +258,12 @@ public final class ApiConnectionImpl extends ApiConnection {
     private Reader reader;
     private Processor processor;
     private final Map<String, ResultListener> listeners;
+    private final Map<String, BinaryResultListener> binaryListeners;
     private final AtomicInteger _tag = new AtomicInteger(0);
     private int timeout = ApiConnection.DEFAULT_COMMAND_TIMEOUT;
 
     /**
-     * thread to read data from the socket and process it into Strings
+     * Thread to read complete raw RouterOS sentences from the socket.
      */
     private class Reader extends Thread {
 
@@ -185,7 +271,7 @@ public final class ApiConnectionImpl extends ApiConnection {
             super("Mikrotik API Reader");
         }
 
-        private String take() throws ApiConnectionException, ApiDataException {
+        private RawSentence take() throws ApiConnectionException, ApiDataException {
             Object val;
             try {
                 val = queue.take();
@@ -197,19 +283,14 @@ public final class ApiConnectionImpl extends ApiConnection {
             } else if (val instanceof ApiDataException) {
                 throw (ApiDataException) val;
             }
-            return (String) val;
-        }
-
-        private boolean isEmpty() {
-            return queue.isEmpty();
+            return (RawSentence) val;
         }
 
         @Override
         public void run() {
             while (connected) {
                 try {
-                    String s = Util.decode(in);
-                    put(s);
+                    put(new RawSentence(Util.readSentence(in)));
                 } catch (ApiDataException ex) {
                     put(ex);
                 } catch (ApiConnectionException ex) {
@@ -227,11 +308,11 @@ public final class ApiConnectionImpl extends ApiConnection {
             }
         }
 
-        private final LinkedBlockingQueue queue = new LinkedBlockingQueue(40);
+        private final LinkedBlockingQueue<Object> queue = new LinkedBlockingQueue<>(40);
     }
 
     /**
-     * Thread to take the received strings and process it into Result objects
+     * Thread to turn raw sentences into existing response objects and listeners.
      */
     private class Processor extends Thread {
 
@@ -242,196 +323,126 @@ public final class ApiConnectionImpl extends ApiConnection {
         @Override
         public void run() {
             while (connected) {
-                Response res;
                 try {
-                    res = unpack();
-                } catch (ApiCommandException ex) {
-                    String tag = ex.getTag();
-                    if (tag != null) {
-                        res = new Error(tag, ex.getMessage(), ex.getCategory());
+                    RawSentence sentence = reader.take();
+                    String tag = sentence.getTag();
+                    BinaryResultListener binary = tag == null ? null : binaryListeners.get(tag);
+                    if (binary != null) {
+                        dispatchBinary(sentence, tag, binary);
                     } else {
-                        continue;
+                        dispatch(sentence.toTextResponse());
                     }
                 } catch (MikrotikApiException ex) {
-                    continue;
-                }
-                if (res.getTag() != null) {
-                    ResultListener l = listeners.get(res.getTag());
-                    if (l != null) {
-                        if (res instanceof Result) {
-                            l.receive((Result) res);
-                        } else if (res instanceof Done) {
-                            if (l instanceof SyncListener) {
-                                ((SyncListener) l).completed((Done) res);
-                            } else {
-                                l.completed();
-                            }
-                            listeners.remove(res.getTag());
-                        } else if (res instanceof Error) {
-                            l.error(new ApiCommandException((Error) res));
-                        }
-                    }
-                } else {
-                    nextTag();
+                    // Preserve existing behavior: malformed/unroutable responses are ignored.
                 }
             }
         }
 
-        private void nextLine() throws ApiConnectionException, ApiDataException {
-            if (lines.isEmpty()) {
-                String block = reader.take();
-                String[] parts = block.split("\n");
-                lines.addAll(Arrays.asList(parts));
-            }
-            line = lines.remove(0);
-        }
-
-        private boolean hasNextLine() {
-            return !lines.isEmpty() || !reader.isEmpty();
-        }
-
-        private String peekLine() throws ApiConnectionException, ApiDataException {
-            if (lines.isEmpty()) {
-                String block = reader.take();
-                String[] parts = block.split("\n");
-                lines.addAll(Arrays.asList(parts));
-            }
-            return lines.get(0);
-        }
-
-        private Response unpack() throws MikrotikApiException {
-            if (line == null) {
-                nextLine();
-            }
-            switch (line) {
-                case "!re":
-                    return unpackRe();
-                case "!done":
-                    return unpackDone();
-                case "!trap":
-                case "!halt":
-                    return unpackError();
-                case "":
-                default:
-                    throw new ApiDataException(String.format("Unexpected line '%s'", line));
-            }
-        }
-
-        private Result unpackRe() throws ApiDataException, ApiConnectionException {
-            nextLine();
-            Result res = new Result();
-            while (!line.startsWith(("!"))) {
-                if (line.startsWith(("="))) {
-                    String[] parts = line.split("=", 3);
-                    if (parts.length == 3) {
-                        if (!parts[2].endsWith("\r")) {
-                            res.put(parts[1], unpackResult(parts[2]));
-                        } else {
-                            final StringBuilder sb = new StringBuilder();
-                            sb.append(parts[2]);
-                            while (!lines.isEmpty()) {
-                                nextLine();
-                                sb.append(line);
-                            }
-                            res.put(parts[1], sb.toString());
-                        }
-                    } else {
-                        throw new ApiDataException(String.format("Malformed line '%s'", line));
-                    }
-                } else if (line.startsWith(".tag=")) {
-                    String[] parts = line.split("=", 2);
-                    if (parts.length == 2) {
-                        res.setTag(parts[1]);
-                    }
-                } else {
-                    throw new ApiDataException(String.format("Unexpected line '%s'", line));
-                }
-                if (hasNextLine()) {
-                    nextLine();
-                } else {
-                    line = null;
-                    break;
-                }
-            }
-            return res;
-        }
-
-        private String unpackResult(String first) throws ApiConnectionException, ApiDataException {
-            StringBuilder buf = new StringBuilder(first);
-            line = null;
-
-            while (hasNextLine()) {
-                String peek = peekLine();
-                if (!(peek.startsWith("!") || peek.startsWith("=") || peek.startsWith(".tag="))) {
-                    nextLine();
-                    buf.append("\n");
-                    buf.append(line);
-                } else {
-                    break;
-                }
-            }
-            return buf.toString();
-        }
-
-        private Done unpackDone() throws MikrotikApiException {
-            Done done = new Done(null);
-            if (hasNextLine()) {
-                nextLine();
-
-                while (!line.startsWith("!")) {
-                    if (line.startsWith(".tag=")) {
-                        String[] parts = line.split("=", 2);
-                        if (parts.length == 2) {
-                            done.setTag(parts[1]);
-                        }
-                    } else if (line.startsWith(("=ret"))) {
-                        String[] parts = line.split("=", 3);
-                        if (parts.length == 3) {
-                            done.setHash(parts[2]);
-                        } else {
-                            throw new ApiDataException(String.format("Malformed line '%s'", line));
-                        }
-                    }
-                    if (hasNextLine()) {
-                        nextLine();
-                    } else {
-                        line = null;
+        private void dispatchBinary(RawSentence sentence, String tag, BinaryResultListener l) {
+            try {
+                switch (sentence.getType()) {
+                    case "!re":
+                        l.receive(sentence.requireSingleRawAttribute("data"));
                         break;
-                    }
-                }
-            }
-            return done;
-        }
-
-        private Error unpackError() throws MikrotikApiException {
-            nextLine();
-            Error err = new Error();
-            if (hasNextLine()) {
-                while (!line.startsWith("!")) {
-                    if (line.startsWith(".tag=")) {
-                        String[] parts = line.split("=", 2);
-                        if (parts.length == 2) {
-                            err.setTag(parts[1]);
-                        }
-                    } else if (line.startsWith("=message=")) {
-                        err.setMessage(line.split("=", 3)[2]);
-                    }
-                    else if (line.startsWith("=category=")) {
-                        err.setCategory(Integer.parseInt(line.split("=", 3)[2]));
-                    }
-                    if (hasNextLine()) {
-                        nextLine();
-                    } else {
-                        line = null;
+                    case "!done":
+                        l.completed();
+                        binaryListeners.remove(tag);
                         break;
-                    }
+                    case "!trap":
+                    case "!halt":
+                        l.error(new ApiCommandException((Error) sentence.toTextResponse()));
+                        binaryListeners.remove(tag);
+                        break;
+                    default:
+                        l.error(new ApiDataException("Unexpected binary response type '" + sentence.getType() + "'"));
+                        binaryListeners.remove(tag);
+                        break;
                 }
+            } catch (MikrotikApiException ex) {
+                l.error(ex);
+                binaryListeners.remove(tag);
             }
-            return err;
         }
 
-        private final List<String> lines = new LinkedList<>();
-        private String line;
+        private void dispatch(Response res) {
+            if (res.getTag() != null) {
+                ResultListener l = listeners.get(res.getTag());
+                if (l != null) {
+                    if (res instanceof Result) {
+                        l.receive((Result) res);
+                    } else if (res instanceof Done) {
+                        if (l instanceof SyncListener) {
+                            ((SyncListener) l).completed((Done) res);
+                        } else {
+                            l.completed();
+                        }
+                        listeners.remove(res.getTag());
+                    } else if (res instanceof Error) {
+                        l.error(new ApiCommandException((Error) res));
+                    }
+                }
+            } else {
+                nextTag();
+            }
+        }
+    }
+
+    private static class SyncBinaryListener implements BinaryResultListener {
+
+        @Override
+        public synchronized void receive(byte[] data) {
+            if (received) {
+                err = new ApiDataException("Binary command returned multiple data results");
+                complete = true;
+                notifyAll();
+                return;
+            }
+            this.data = Arrays.copyOf(data, data.length);
+            received = true;
+        }
+
+        @Override
+        public synchronized void error(MikrotikApiException ex) {
+            err = ex;
+            complete = true;
+            notifyAll();
+        }
+
+        @Override
+        public synchronized void completed() {
+            if (!received && err == null) {
+                err = new ApiDataException("Binary command completed without data");
+            }
+            complete = true;
+            notifyAll();
+        }
+
+        private byte[] getResult(int timeout) throws MikrotikApiException {
+            try {
+                synchronized (this) {
+                    int waitTime = timeout;
+                    while (!complete && waitTime > 0) {
+                        long start = System.currentTimeMillis();
+                        wait(waitTime);
+                        waitTime -= (int) (System.currentTimeMillis() - start);
+                    }
+                    if (!complete) {
+                        throw new ApiConnectionException(String.format("Command timed out after %d ms", timeout));
+                    }
+                }
+            } catch (InterruptedException ex) {
+                throw new ApiConnectionException(ex.getMessage(), ex);
+            }
+            if (err != null) {
+                throw err;
+            }
+            return data;
+        }
+
+        private byte[] data;
+        private MikrotikApiException err;
+        private boolean received;
+        private boolean complete;
     }
 
     private static class SyncListener implements ResultListener {

@@ -1,5 +1,7 @@
 package me.legrange.mikrotik;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import javax.net.SocketFactory;
@@ -94,6 +96,20 @@ public abstract class ApiConnection implements AutoCloseable {
      * @throws me.legrange.mikrotik.MikrotikApiException Thrown if the API encounters an error executing a command.
      */
     public abstract String execute(String cmd, ResultListener lis) throws MikrotikApiException;
+
+    /**
+     * Download a RouterOS file through the existing API connection without
+     * converting its payload to text.
+     *
+     * @param remoteFile RouterOS file name/path.
+     * @param localFile Local target path.
+     * @return number of bytes written after a complete successful download.
+     * @throws MikrotikApiException if RouterOS or the API reports an error.
+     * @throws IOException if the local file cannot be safely written.
+     * @since 3.0.8-praktimarc.2
+     */
+    public abstract long downloadFile(String remoteFile, Path localFile)
+            throws MikrotikApiException, IOException;
 
     /**
      * cancel a command
