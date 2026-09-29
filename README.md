@@ -216,8 +216,8 @@ con.execute("/interface/gre/set .id=gre1 remote-address=10.0.1.1");
 
 And now remove the object:
 
-```java 
-con.execute("/interface/gre/remove .id=*1");
+```java
+con.execute("/interface/gre/remove .id=gre1"); 
 ```
 
 ### Un-setting a variable on an object 
