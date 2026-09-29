@@ -216,8 +216,8 @@ con.execute("/interface/gre/set .id=gre1 remote-address=10.0.1.1");
 
 And now remove the object:
 
-```java
-con.execute("/interface/gre/remove .id=gre1"); 
+```java 
+con.execute("/interface/gre/remove .id=*1");
 ```
 
 ### Un-setting a variable on an object 
@@ -260,9 +260,9 @@ String tag = con.execute("/interface/wireless/monitor .id=wlan1 return signal-to
 ```
 
 The `ResultListener` interface has three methods the user needs to implement:
-* The `receive()` method is invoked when the API receives a result from the router.
-* The `completed()` method is invoked when the API receives the final `!done` response from the router.
-* The `error()` method is invoked when the API receives a `!trap` or other API error.
+* `receive()` is called to receive results produced by the router from the API. 
+* `error()` is called when an exception is raised based on a 'trap' received from the router or another (typically connection) problem.
+* `completed()` is called when the router has indicated that the command has completed or has been cancelled. 
 
 The above command will run and send results asynchronously as they become available, until it is canceled. The command (identified by the unique String returned) is canceled like this:
 
