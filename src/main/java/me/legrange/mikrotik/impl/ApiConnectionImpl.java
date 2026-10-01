@@ -738,11 +738,7 @@ public final class ApiConnectionImpl extends ApiConnection {
                         l.receive((Result) res);
                     } else if (res instanceof Done) {
                         if (removeTextListener(res.getTag(), l)) {
-                            if (l instanceof SyncListener) {
-                                ((SyncListener) l).completed((Done) res);
-                            } else {
-                                l.completed();
-                            }
+                            l.completed(((Done) res).getProperties());
                         }
                     } else if (res instanceof Error) {
                         ApiCommandException commandError = new ApiCommandException((Error) res);
@@ -830,10 +826,12 @@ public final class ApiConnectionImpl extends ApiConnection {
             notifyAll();
         }
 
-        synchronized void completed(Done done) {
-            if (done.getHash() != null) {
+        @Override
+        public synchronized void completed(Map<String, String> completion) {
+            String ret = completion.get("ret");
+            if (ret != null) {
                 Result res = new Result();
-                res.put("ret", done.getHash());
+                res.put("ret", ret);
                 results.add(res);
             }
             complete = true;
