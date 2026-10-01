@@ -47,7 +47,12 @@ final class RouterOsTestServer implements AutoCloseable {
     RouterOsTestServer(Handler handler) throws IOException {
         this.handler = handler;
         server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-        thread = new Thread(this::run, "RouterOsTestServer");
+        thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                RouterOsTestServer.this.run();
+            }
+        }, "RouterOsTestServer");
         thread.setDaemon(true);
         thread.start();
     }
@@ -68,7 +73,7 @@ final class RouterOsTestServer implements AutoCloseable {
     }
 
     synchronized void reply(String type, String tag, String... attributes) throws IOException {
-        List<byte[]> words = new ArrayList<>();
+        List<byte[]> words = new ArrayList<byte[]>();
         words.add(text(type));
         for (String attribute : attributes) {
             words.add(text(attribute));
@@ -80,7 +85,7 @@ final class RouterOsTestServer implements AutoCloseable {
     }
 
     synchronized void replyData(String tag, byte[] data) throws IOException {
-        List<byte[]> words = new ArrayList<>();
+        List<byte[]> words = new ArrayList<byte[]>();
         words.add(text("!re"));
         byte[] prefix = text("=data=");
         byte[] word = new byte[prefix.length + data.length];
@@ -92,7 +97,7 @@ final class RouterOsTestServer implements AutoCloseable {
     }
 
     synchronized void replyRaw(String tag, byte[]... rawAttributes) throws IOException {
-        List<byte[]> words = new ArrayList<>();
+        List<byte[]> words = new ArrayList<byte[]>();
         words.add(text("!re"));
         Collections.addAll(words, rawAttributes);
         words.add(text(".tag=" + tag));
@@ -104,7 +109,7 @@ final class RouterOsTestServer implements AutoCloseable {
     }
 
     synchronized void replyFatal(String... words) throws IOException {
-        List<byte[]> reply = new ArrayList<>();
+        List<byte[]> reply = new ArrayList<byte[]>();
         reply.add(text("!fatal"));
         for (String word : words) {
             reply.add(text(word));
@@ -166,14 +171,14 @@ final class RouterOsTestServer implements AutoCloseable {
     }
 
     private CommandSentence parse(List<byte[]> rawWords) {
-        List<String> words = new ArrayList<>();
+        List<String> words = new ArrayList<String>();
         for (byte[] word : rawWords) {
             words.add(new String(word, StandardCharsets.UTF_8));
         }
         String command = words.get(0);
         String tag = null;
-        Map<String, String> parameters = new LinkedHashMap<>();
-        List<String> queries = new ArrayList<>();
+        Map<String, String> parameters = new LinkedHashMap<String, String>();
+        List<String> queries = new ArrayList<String>();
         for (int i = 1; i < words.size(); i++) {
             String word = words.get(i);
             if (word.startsWith(".tag=")) {
