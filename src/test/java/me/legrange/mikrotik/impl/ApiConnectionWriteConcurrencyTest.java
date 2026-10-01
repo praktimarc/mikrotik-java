@@ -24,6 +24,7 @@ import me.legrange.mikrotik.MikrotikApiException;
 import me.legrange.mikrotik.ResultListener;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -129,6 +130,28 @@ public class ApiConnectionWriteConcurrencyTest {
         }
     }
 
+    @Test(timeout = 3000)
+    public void commonWriterMakesSendFailureTerminalBeforeAnotherWriteCanStart() throws Exception {
+        CountingFailingOutputStream failing = new CountingFailingOutputStream();
+        ApiConnectionImpl connection = newConnectedConnection(new DataOutputStream(failing));
+        try {
+            Throwable first = invokeWriteCommand(connection, new Command("/first/failing"));
+
+            assertTrue(first instanceof ApiConnectionException);
+            assertFalse("The common writer must make the session terminal before returning from a send failure",
+                    connection.isConnected());
+            assertEquals(1, failing.writeAttempts);
+
+            Throwable second = invokeWriteCommand(connection, new Command("/second/must-not-write"));
+
+            assertTrue(second instanceof ApiConnectionException);
+            assertEquals("No writer may touch the stream after the fatal send transition",
+                    1, failing.writeAttempts);
+        } finally {
+            connection.close();
+        }
+    }
+
     private static ApiConnection connect(RouterOsTestServer server) throws Exception {
         return ApiConnection.connect(SocketFactory.getDefault(),
                 InetAddress.getLoopbackAddress().getHostAddress(), server.getPort(), 1000);
@@ -157,6 +180,18 @@ public class ApiConnectionWriteConcurrencyTest {
         }
     }
 
+    private static Throwable invokeWriteCommand(ApiConnectionImpl connection, Command command) throws Exception {
+        Method method = ApiConnectionImpl.class.getDeclaredMethod("writeCommand", Command.class);
+        method.setAccessible(true);
+        try {
+            method.invoke(connection, command);
+            fail("Expected command write failure");
+            return null;
+        } catch (InvocationTargetException ex) {
+            return ex.getCause();
+        }
+    }
+
     private static ApiConnectionImpl newConnectedConnection(DataOutputStream output) throws Exception {
         Constructor<ApiConnectionImpl> constructor = ApiConnectionImpl.class.getDeclaredConstructor();
         constructor.setAccessible(true);
@@ -177,6 +212,16 @@ public class ApiConnectionWriteConcurrencyTest {
         Field field = ApiConnectionImpl.class.getDeclaredField("out");
         field.setAccessible(true);
         field.set(connection, output);
+    }
+
+    private static final class CountingFailingOutputStream extends OutputStream {
+        private int writeAttempts;
+
+        @Override
+        public void write(int value) throws IOException {
+            writeAttempts++;
+            throw new IOException("deterministic send failure");
+        }
     }
 
     private static final class CoordinatedDataOutputStream extends DataOutputStream {
