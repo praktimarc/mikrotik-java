@@ -103,7 +103,7 @@ public class ApiConnectionLifecycleTest {
 
     @Test
     public void synchronousTimeoutRemovesItsTextRegistration() throws Exception {
-        ApiConnectionImpl connection = newConnection();
+        ApiConnectionImpl connection = newConnectedConnection();
         setOutput(connection, new DataOutputStream(new ByteArrayOutputStream()));
 
         Throwable thrown = invokeSynchronousExecute(connection, new Command("/test/timeout"), 25);
@@ -115,7 +115,7 @@ public class ApiConnectionLifecycleTest {
 
     @Test
     public void asyncWriteFailureRollsBackTextRegistration() throws Exception {
-        ApiConnectionImpl connection = newConnection();
+        ApiConnectionImpl connection = newConnectedConnection();
         setOutput(connection, new DataOutputStream(new OutputStream() {
             @Override
             public void write(int b) throws IOException {
@@ -248,6 +248,19 @@ public class ApiConnectionLifecycleTest {
         Constructor<ApiConnectionImpl> constructor = ApiConnectionImpl.class.getDeclaredConstructor();
         constructor.setAccessible(true);
         return constructor.newInstance();
+    }
+
+    private static ApiConnectionImpl newConnectedConnection() throws Exception {
+        ApiConnectionImpl connection = newConnection();
+        Field state = ApiConnectionImpl.class.getDeclaredField("state");
+        state.setAccessible(true);
+        for (Object constant : state.getType().getEnumConstants()) {
+            if ("CONNECTED".equals(constant.toString())) {
+                state.set(connection, constant);
+                return connection;
+            }
+        }
+        throw new AssertionError("CONNECTED state constant not found");
     }
 
     private static void setOutput(ApiConnectionImpl connection, DataOutputStream output) throws Exception {
