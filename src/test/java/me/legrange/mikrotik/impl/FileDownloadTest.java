@@ -21,9 +21,9 @@ public class FileDownloadTest {
     public void downloadsMultipleShortChunksUsingActualOffsets() throws Exception {
         Path dir = Files.createTempDirectory("file-download");
         Path target = dir.resolve("config.bin");
-        byte[] data = payload(70013);
-        List<Long> offsets = new ArrayList<>();
-        List<Integer> requested = new ArrayList<>();
+        final byte[] data = payload(70013);
+        final List<Long> offsets = new ArrayList<>();
+        final List<Integer> requested = new ArrayList<>();
 
         long bytes = FileDownload.download(target, new FileDownload.Source() {
             @Override
@@ -52,7 +52,7 @@ public class FileDownloadTest {
     @Test
     public void zeroByteFileDoesNotReadSource() throws Exception {
         Path target = Files.createTempDirectory("file-download-zero").resolve("empty.bin");
-        int[] reads = {0};
+        final int[] reads = {0};
 
         long bytes = FileDownload.download(target, new FileDownload.Source() {
             @Override
@@ -141,7 +141,7 @@ public class FileDownloadTest {
     @Test
     public void sourceFailureAfterOneChunkCleansPartialFile() throws Exception {
         Path target = Files.createTempDirectory("file-download-source-error").resolve("config.bin");
-        int[] reads = {0};
+        final int[] reads = {0};
 
         try {
             FileDownload.download(target, new FileDownload.Source() {
@@ -172,7 +172,7 @@ public class FileDownloadTest {
         Path target = dir.resolve("config.bin");
         Files.createDirectory(target);
         Files.write(target.resolve("child"), new byte[]{1});
-        int[] sourceCalls = {0};
+        final int[] sourceCalls = {0};
 
         try {
             FileDownload.download(target, new FileDownload.Source() {
