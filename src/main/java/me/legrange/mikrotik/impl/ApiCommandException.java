@@ -1,43 +1,21 @@
 package me.legrange.mikrotik.impl;
 
-import me.legrange.mikrotik.MikrotikApiException;
-
 /**
- * Thrown when the Mikrotik returns an error when receiving our command.
+ * Compatibility subtype for command errors exposed by older imports.
  *
- * @author GideonLeGrange
+ * @author Gideon Le Grange
  */
-public class ApiCommandException extends MikrotikApiException {
-
-    private String tag = null;
-    private int category = 0;
-
-    /**
-     * return the tag associated with this exception, if there is one
-     *
-     * @return the tag associated with this exception. Null if there is no tag
-     */
-    public String getTag() {
-        return tag;
-    }
+public class ApiCommandException extends me.legrange.mikrotik.ApiCommandException {
 
     ApiCommandException(String msg) {
-        super(msg);
+        super(msg, null, null);
     }
 
     ApiCommandException(String msg, Throwable err) {
-        super(msg, err);
-    }
-
-    public int getCategory() {
-        return category;
+        super(msg, null, null, err);
     }
 
     ApiCommandException(Error err) {
-        super(err.getMessage());
-        tag = err.getTag();
-        category = err.getCategory();
+        super(err.getMessage(), err.getTag(), err.hasCategory() ? Integer.valueOf(err.getCategory()) : null);
     }
-
-
 }
