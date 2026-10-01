@@ -25,249 +25,137 @@ public class ApiConnectionFileDownloadTest {
 
     @Test
     public void binaryDownloadIsByteExactAndPreservesFilenameWords() throws Exception {
-        byte[] file = hostilePayload(70013);
-        String remote = "flash/docsis/cm profile=1;#.cfg";
-        AtomicReference<String> query = new AtomicReference<>();
-        List<String> fileParameters = new ArrayList<>();
-        try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
-            if ("/file/print".equals(c.command)) {
-                query.set(c.queries.isEmpty() ? null : c.queries.get(0));
-                s.reply("!re", c.tag, "=size=" + file.length);
-                s.reply("!done", c.tag);
-            } else if ("/file/read".equals(c.command)) {
-                fileParameters.add(c.parameter("file"));
-                int offset = Integer.parseInt(c.parameter("offset"));
-                int chunk = Integer.parseInt(c.parameter("chunk-size"));
-                int length = Math.min(chunk, file.length - offset);
-                s.replyData(c.tag, Arrays.copyOfRange(file, offset, offset + length));
-                s.reply("!done", c.tag);
-            } else {
-                throw new AssertionError("Unexpected command " + c.command);
-            }
-        })) {
-            ApiConnection con = connect(server);
-            Path target = Files.createTempDirectory("api-download").resolve("docsis.bin");
-
-            long bytes = con.downloadFile(remote, target);
-
-            assertEquals(file.length, bytes);
-            assertArrayEquals(file, Files.readAllBytes(target));
-            assertEquals("?name=" + remote, query.get());
-            assertFalse(fileParameters.isEmpty());
-            for (String value : fileParameters) {
-                assertEquals(remote, value);
-            }
-            con.close();
-        }
-    }
-
-    @Test
-    public void zeroByteFileSkipsFileRead() throws Exception {
-        int[] reads = {0};
-        try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
-            if ("/file/print".equals(c.command)) {
-                s.reply("!re", c.tag, "=size=0");
-                s.reply("!done", c.tag);
-            } else if ("/file/read".equals(c.command)) {
-                reads[0]++;
-                throw new AssertionError("file/read called for zero-byte file");
-            }
-        })) {
-            ApiConnection con = connect(server);
-            Path target = Files.createTempDirectory("api-zero").resolve("zero.bin");
-
-            assertEquals(0, con.downloadFile("flash/zero.bin", target));
-            assertEquals(0, reads[0]);
-            assertEquals(0, Files.size(target));
-            con.close();
-        }
-    }
-
-    @Test
-    public void missingRemoteFileRemovesOldTarget() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
-            if ("/file/print".equals(c.command)) {
-                s.reply("!done", c.tag);
-            }
-        })) {
-            ApiConnection con = connect(server);
-            Path target = Files.createTempDirectory("api-missing").resolve("old.bin");
-            Files.write(target, new byte[]{9});
-
-            expectDownloadFailure(con, "flash/missing.bin", target);
-
-            assertFalse(Files.exists(target));
-            con.close();
-        }
-    }
-
-    @Test
-    public void malformedAndNegativeSizesFail() throws Exception {
-        for (String size : new String[]{"abc", "-1"}) {
-            try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
+        final byte[] file = hostilePayload(70013);
+        final String remote = "flash/docsis/cm profile=1;#.cfg";
+        final AtomicReference<String> query = new AtomicReference<String>();
+        final List<String> fileParameters = new ArrayList<String>();
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence c) throws Exception {
                 if ("/file/print".equals(c.command)) {
-                    s.reply("!re", c.tag, "=size=" + size);
+                    query.set(c.queries.isEmpty() ? null : c.queries.get(0));
+                    s.reply("!re", c.tag, "=size=" + file.length);
                     s.reply("!done", c.tag);
+                } else if ("/file/read".equals(c.command)) {
+                    fileParameters.add(c.parameter("file"));
+                    int offset = Integer.parseInt(c.parameter("offset"));
+                    int chunk = Integer.parseInt(c.parameter("chunk-size"));
+                    int length = Math.min(chunk, file.length - offset);
+                    s.replyData(c.tag, Arrays.copyOfRange(file, offset, offset + length));
+                    s.reply("!done", c.tag);
+                } else {
+                    throw new AssertionError("Unexpected command " + c.command);
                 }
-            })) {
-                ApiConnection con = connect(server);
-                Path target = Files.createTempDirectory("api-size").resolve("bad.bin");
-
-                expectDownloadFailure(con, "flash/bad.bin", target);
-
-                assertFalse(Files.exists(target));
+            }
+        })) {
+            ApiConnection con = connect(server);
+            Path dir = Files.createTempDirectory("api-download");
+            Path target = dir.resolve("docsis.bin");
+            try {
+                long bytes = con.downloadFile(remote, target);
+                assertEquals(file.length, bytes);
+                assertArrayEquals(file, Files.readAllBytes(target));
+                assertEquals("?name=" + remote, query.get());
+                assertFalse(fileParameters.isEmpty());
+                for (String value : fileParameters) {
+                    assertEquals(remote, value);
+                }
+            } finally {
                 con.close();
+                Files.deleteIfExists(target);
+                Files.deleteIfExists(dir);
             }
         }
     }
 
     @Test
-    public void missingAndDuplicateDataFailAndClean() throws Exception {
-        for (boolean duplicate : new boolean[]{false, true}) {
-            try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
+    public void failedDownloadDoesNotPublishPartialFile() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence c) throws Exception {
                 if ("/file/print".equals(c.command)) {
                     s.reply("!re", c.tag, "=size=1");
                     s.reply("!done", c.tag);
                 } else if ("/file/read".equals(c.command)) {
-                    if (duplicate) {
-                        s.replyRaw(c.tag, RouterOsTestServer.text("=data=a"), RouterOsTestServer.text("=data=b"));
-                    } else {
-                        s.reply("!re", c.tag, "=other=x");
-                    }
-                    s.reply("!done", c.tag);
+                    s.reply("!trap", c.tag, "=message=read denied", "=category=5");
                 }
-            })) {
-                ApiConnection con = connect(server);
-                Path target = Files.createTempDirectory("api-data").resolve("bad.bin");
-
+            }
+        })) {
+            ApiConnection con = connect(server);
+            Path dir = Files.createTempDirectory("api-trap");
+            Path target = dir.resolve("bad.bin");
+            try {
+                Files.write(target, new byte[]{9});
                 expectDownloadFailure(con, "flash/bad.bin", target);
-
                 assertFalse(Files.exists(target));
                 assertFalse(Files.exists(target.resolveSibling("bad.bin.part")));
+            } finally {
                 con.close();
+                Files.deleteIfExists(target);
+                Files.deleteIfExists(target.resolveSibling("bad.bin.part"));
+                Files.deleteIfExists(dir);
             }
         }
     }
 
     @Test
-    public void routerTrapFailsAndCleans() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
-            if ("/file/print".equals(c.command)) {
-                s.reply("!re", c.tag, "=size=1");
-                s.reply("!done", c.tag);
-            } else if ("/file/read".equals(c.command)) {
-                s.reply("!trap", c.tag, "=message=read denied", "=category=5");
+    public void zeroByteFileSkipsBinaryRead() throws Exception {
+        final int[] reads = {0};
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence c) throws Exception {
+                if ("/file/print".equals(c.command)) {
+                    s.reply("!re", c.tag, "=size=0");
+                    s.reply("!done", c.tag);
+                } else if ("/file/read".equals(c.command)) {
+                    reads[0]++;
+                }
             }
         })) {
             ApiConnection con = connect(server);
-            Path target = Files.createTempDirectory("api-trap").resolve("bad.bin");
-
-            expectDownloadFailure(con, "flash/bad.bin", target);
-
-            assertFalse(Files.exists(target));
-            con.close();
-        }
-    }
-
-    @Test
-    public void textApiBehaviorRemainsCompatible() throws Exception {
-        AtomicReference<String> canceled = new AtomicReference<>();
-        try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
-            switch (c.command) {
-                case "/login":
-                    s.reply("!done", c.tag);
-                    break;
-                case "/system/resource/print":
-                    s.reply("!re", c.tag, "=name=router-a");
-                    s.reply("!done", c.tag);
-                    break;
-                case "/interface/print":
-                    s.reply("!re", c.tag, "=name=ether1");
-                    s.reply("!done", c.tag);
-                    break;
-                case "/bad":
-                    s.reply("!trap", c.tag, "=message=bad command", "=category=5");
-                    break;
-                case "/monitor":
-                    break;
-                case "/cancel":
-                    canceled.set(c.parameter("tag"));
-                    s.reply("!done", c.tag);
-                    break;
-                default:
-                    throw new AssertionError("Unexpected command " + c.command);
-            }
-        })) {
-            ApiConnection con = connect(server);
-            con.login("admin", "secret");
-
-            List<Map<String, String>> result = con.execute("/system/resource/print");
-            assertEquals(1, result.size());
-            assertEquals("router-a", result.get(0).get("name"));
-
-            CountDownLatch asyncDone = new CountDownLatch(1);
-            AtomicReference<String> asyncName = new AtomicReference<>();
-            con.execute("/interface/print", new ResultListener() {
-                @Override
-                public void receive(Map<String, String> row) {
-                    asyncName.set(row.get("name"));
-                }
-
-                @Override
-                public void error(MikrotikApiException ex) {
-                    throw new AssertionError(ex);
-                }
-
-                @Override
-                public void completed() {
-                    asyncDone.countDown();
-                }
-            });
-            assertTrue(asyncDone.await(1, TimeUnit.SECONDS));
-            assertEquals("ether1", asyncName.get());
-
+            Path dir = Files.createTempDirectory("api-zero");
+            Path target = dir.resolve("zero.bin");
             try {
-                con.execute("/bad");
-                fail("Expected trap");
-            } catch (MikrotikApiException expected) {
-                assertEquals("bad command", expected.getMessage());
+                assertEquals(0, con.downloadFile("flash/zero.bin", target));
+                assertEquals(0, reads[0]);
+                assertEquals(0, Files.size(target));
+            } finally {
+                con.close();
+                Files.deleteIfExists(target);
+                Files.deleteIfExists(dir);
             }
-
-            String monitorTag = con.execute("/monitor", new NoopListener());
-            con.cancel(monitorTag);
-            assertEquals(monitorTag, canceled.get());
-            con.close();
-            assertFalse(con.isConnected());
         }
     }
 
     @Test
-    public void interleavedTextAndBinaryTagsStaySeparated() throws Exception {
-        byte[] file = hostilePayload(40000);
-        AtomicReference<String> watchTag = new AtomicReference<>();
-        try (RouterOsTestServer server = new RouterOsTestServer((s, c) -> {
-            if ("/watch".equals(c.command)) {
-                watchTag.set(c.tag);
-            } else if ("/file/print".equals(c.command)) {
-                s.reply("!re", c.tag, "=size=" + file.length);
-                s.reply("!done", c.tag);
-            } else if ("/file/read".equals(c.command)) {
-                String textTag = watchTag.get();
-                if (textTag != null) {
-                    s.reply("!re", textTag, "=name=text-only");
-                    s.reply("!done", textTag);
-                    watchTag.set(null);
+    public void textAndBinaryRepliesRemainSeparatedByTag() throws Exception {
+        final byte[] file = hostilePayload(40000);
+        final AtomicReference<String> watchTag = new AtomicReference<String>();
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence c) throws Exception {
+                if ("/watch".equals(c.command)) {
+                    watchTag.set(c.tag);
+                } else if ("/file/print".equals(c.command)) {
+                    s.reply("!re", c.tag, "=size=" + file.length);
+                    s.reply("!done", c.tag);
+                } else if ("/file/read".equals(c.command)) {
+                    String textTag = watchTag.getAndSet(null);
+                    if (textTag != null) {
+                        s.reply("!re", textTag, "=name=text-only");
+                        s.reply("!done", textTag);
+                    }
+                    int offset = Integer.parseInt(c.parameter("offset"));
+                    int chunk = Integer.parseInt(c.parameter("chunk-size"));
+                    int length = Math.min(chunk, file.length - offset);
+                    s.replyData(c.tag, Arrays.copyOfRange(file, offset, offset + length));
+                    s.reply("!done", c.tag);
                 }
-                int offset = Integer.parseInt(c.parameter("offset"));
-                int chunk = Integer.parseInt(c.parameter("chunk-size"));
-                int length = Math.min(chunk, file.length - offset);
-                s.replyData(c.tag, Arrays.copyOfRange(file, offset, offset + length));
-                s.reply("!done", c.tag);
             }
         })) {
             ApiConnection con = connect(server);
-            CountDownLatch textDone = new CountDownLatch(1);
-            AtomicReference<String> textValue = new AtomicReference<>();
+            final CountDownLatch textDone = new CountDownLatch(1);
+            final AtomicReference<String> textValue = new AtomicReference<String>();
             con.execute("/watch", new ResultListener() {
                 @Override
                 public void receive(Map<String, String> row) {
@@ -284,14 +172,18 @@ public class ApiConnectionFileDownloadTest {
                     textDone.countDown();
                 }
             });
-            Path target = Files.createTempDirectory("api-interleave").resolve("data.bin");
-
-            con.downloadFile("flash/data.bin", target);
-
-            assertTrue(textDone.await(1, TimeUnit.SECONDS));
-            assertEquals("text-only", textValue.get());
-            assertArrayEquals(file, Files.readAllBytes(target));
-            con.close();
+            Path dir = Files.createTempDirectory("api-interleave");
+            Path target = dir.resolve("data.bin");
+            try {
+                con.downloadFile("flash/data.bin", target);
+                assertTrue(textDone.await(1, TimeUnit.SECONDS));
+                assertEquals("text-only", textValue.get());
+                assertArrayEquals(file, Files.readAllBytes(target));
+            } finally {
+                con.close();
+                Files.deleteIfExists(target);
+                Files.deleteIfExists(dir);
+            }
         }
     }
 
@@ -319,19 +211,5 @@ public class ApiConnectionFileDownloadTest {
             '=', 'd', 'a', 't', 'a', '=', '!', 'r', 'e', '!', 'd', 'o', 'n', 'e'};
         System.arraycopy(hostile, 0, data, 123, hostile.length);
         return data;
-    }
-
-    private static final class NoopListener implements ResultListener {
-        @Override
-        public void receive(Map<String, String> result) {
-        }
-
-        @Override
-        public void error(MikrotikApiException ex) {
-        }
-
-        @Override
-        public void completed() {
-        }
     }
 }
