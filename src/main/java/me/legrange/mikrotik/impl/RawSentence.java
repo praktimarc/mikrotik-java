@@ -114,9 +114,7 @@ final class RawSentence {
                 continue;
             }
             Attribute attribute = textAttribute(word);
-            if ("ret".equals(attribute.name)) {
-                done.setHash(attribute.value);
-            }
+            done.put(attribute.name, attribute.value);
         }
         return done;
     }
