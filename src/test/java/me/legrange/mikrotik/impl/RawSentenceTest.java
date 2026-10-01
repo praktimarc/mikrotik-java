@@ -6,6 +6,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.fail;
 
 public class RawSentenceTest {
@@ -44,6 +45,39 @@ public class RawSentenceTest {
         assertEquals("9", error.getTag());
         assertEquals("bad command", error.getMessage());
         assertEquals(5, error.getCategory());
+    }
+
+    @Test
+    public void emptyReplyIsRecognizedWithoutFabricatingResultData() throws Exception {
+        RawSentence sentence = new RawSentence(Arrays.asList(text("!empty"), text(".tag=b")));
+
+        assertEquals("!empty", sentence.getType());
+        assertEquals("b", sentence.getTag());
+        assertNull(sentence.toTextResponse());
+    }
+
+    @Test
+    public void fatalDiagnosticAcceptsFreeWordPayload() throws Exception {
+        RawSentence sentence = new RawSentence(Arrays.asList(
+                text("!fatal"), text("session terminated on request")));
+
+        assertEquals("session terminated on request", sentence.getFatalDiagnostic());
+    }
+
+    @Test
+    public void fatalDiagnosticPrefersMessageAttribute() throws Exception {
+        RawSentence sentence = new RawSentence(Arrays.asList(
+                text("!fatal"), text("raw fallback"), text("=message=permission denied")));
+
+        assertEquals("permission denied", sentence.getFatalDiagnostic());
+    }
+
+    @Test
+    public void fatalDiagnosticFallsBackWithoutNormalAttributeParsing() throws Exception {
+        RawSentence sentence = new RawSentence(Arrays.asList(
+                text("!fatal"), text("malformed=diagnostic=still useful")));
+
+        assertEquals("malformed=diagnostic=still useful", sentence.getFatalDiagnostic());
     }
 
     @Test

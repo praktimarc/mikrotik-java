@@ -8,10 +8,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import me.legrange.mikrotik.ApiConnectionException;
 
 final class RouterOsTestServer implements AutoCloseable {
@@ -53,6 +56,17 @@ final class RouterOsTestServer implements AutoCloseable {
         return server.getLocalPort();
     }
 
+    boolean awaitClientConnection(long timeoutMs) throws InterruptedException {
+        return clientConnected.await(timeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    void closeClientConnection() throws IOException {
+        Socket current = client;
+        if (current != null) {
+            current.close();
+        }
+    }
+
     synchronized void reply(String type, String tag, String... attributes) throws IOException {
         List<byte[]> words = new ArrayList<>();
         words.add(text(type));
@@ -85,6 +99,24 @@ final class RouterOsTestServer implements AutoCloseable {
         writeSentence(words);
     }
 
+    synchronized void replyWords(byte[]... words) throws IOException {
+        writeSentence(Arrays.asList(words));
+    }
+
+    synchronized void replyFatal(String... words) throws IOException {
+        List<byte[]> reply = new ArrayList<>();
+        reply.add(text("!fatal"));
+        for (String word : words) {
+            reply.add(text(word));
+        }
+        writeSentence(reply);
+    }
+
+    synchronized void writeRawBytes(byte[] bytes) throws IOException {
+        out.write(bytes);
+        out.flush();
+    }
+
     void assertHealthy() throws Exception {
         if (failure != null) {
             if (failure instanceof Exception) {
@@ -111,6 +143,7 @@ final class RouterOsTestServer implements AutoCloseable {
     private void run() {
         try (Socket accepted = server.accept()) {
             client = accepted;
+            clientConnected.countDown();
             in = accepted.getInputStream();
             out = accepted.getOutputStream();
             while (!closed) {
@@ -201,6 +234,7 @@ final class RouterOsTestServer implements AutoCloseable {
     private final Handler handler;
     private final ServerSocket server;
     private final Thread thread;
+    private final CountDownLatch clientConnected = new CountDownLatch(1);
     private volatile Socket client;
     private volatile InputStream in;
     private volatile OutputStream out;

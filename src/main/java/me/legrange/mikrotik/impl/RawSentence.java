@@ -44,9 +44,35 @@ final class RawSentence {
             case "!trap":
             case "!halt":
                 return toError();
+            case "!empty":
+                return null;
             default:
                 throw new ApiDataException(String.format("Unexpected response type '%s'", getType()));
         }
+    }
+
+    String getFatalDiagnostic() throws ApiDataException {
+        if (!"!fatal".equals(getType())) {
+            throw new ApiDataException("Fatal diagnostic requested for non-fatal RouterOS sentence");
+        }
+        String fallback = null;
+        byte[] messagePrefix = "=message=".getBytes(StandardCharsets.US_ASCII);
+        for (int i = 1; i < words.size(); i++) {
+            byte[] word = words.get(i);
+            if (isTag(word)) {
+                continue;
+            }
+            if (startsWith(word, messagePrefix)) {
+                return new String(word, messagePrefix.length, word.length - messagePrefix.length,
+                        StandardCharsets.UTF_8);
+            }
+            if (fallback == null) {
+                fallback = text(word);
+            }
+        }
+        return fallback == null || fallback.isEmpty()
+                ? "RouterOS reported a fatal API error"
+                : fallback;
     }
 
     byte[] requireSingleRawAttribute(String name) throws ApiDataException {
