@@ -195,13 +195,13 @@ public final class ApiConnectionImpl extends ApiConnection {
         cmd.setTag(tag);
         registerTextListener(tag, lis);
         try {
-            Util.write(cmd, out);
-        } catch (UnsupportedEncodingException ex) {
+            writeCommand(cmd);
+        } catch (MikrotikApiException ex) {
             removeTextListener(tag, lis);
-            throw new ApiDataException(ex.getMessage(), ex);
-        } catch (IOException ex) {
-            removeTextListener(tag, lis);
-            throw new ApiConnectionException(ex.getMessage(), ex);
+            if (ex instanceof ApiConnectionException) {
+                failConnection((ApiConnectionException) ex);
+            }
+            throw ex;
         }
         return tag;
     }
@@ -212,18 +212,33 @@ public final class ApiConnectionImpl extends ApiConnection {
         cmd.setTag(tag);
         registerBinaryListener(tag, l);
         try {
-            Util.write(cmd, out);
-        } catch (UnsupportedEncodingException ex) {
+            writeCommand(cmd);
+        } catch (MikrotikApiException ex) {
             removeBinaryListener(tag, l);
-            throw new ApiDataException(ex.getMessage(), ex);
-        } catch (IOException ex) {
-            removeBinaryListener(tag, l);
-            throw new ApiConnectionException(ex.getMessage(), ex);
+            if (ex instanceof ApiConnectionException) {
+                failConnection((ApiConnectionException) ex);
+            }
+            throw ex;
         }
         try {
             return l.getResult(timeout);
         } finally {
             removeBinaryListener(tag, l);
+        }
+    }
+
+    private void writeCommand(Command cmd) throws MikrotikApiException {
+        synchronized (writeLock) {
+            synchronized (lifecycleLock) {
+                requireConnectedLocked();
+            }
+            try {
+                Util.write(cmd, out);
+            } catch (UnsupportedEncodingException ex) {
+                throw new ApiDataException(ex.getMessage(), ex);
+            } catch (IOException ex) {
+                throw new ApiConnectionException(ex.getMessage(), ex);
+            }
         }
     }
 
@@ -483,6 +498,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     private Reader reader;
     private Processor processor;
     private final Object lifecycleLock = new Object();
+    private final Object writeLock = new Object();
     private final Map<String, ResultListener> listeners;
     private final Map<String, BinaryResultListener> binaryListeners;
     private final List<ConnectionListener> connectionListeners = new ArrayList<>();
