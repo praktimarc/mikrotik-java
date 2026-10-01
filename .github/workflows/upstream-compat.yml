@@ -5,6 +5,9 @@ on:
     branches:
       - upstream/api-connection-hardening
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,9 +17,19 @@ jobs:
         with:
           distribution: temurin
           java-version: '8'
-      - name: Apply Java 7 compatibility probe
+      - name: Apply Java 7 compatibility fix
         shell: bash
         run: |
           sed -i 's/public long downloadFile(String remoteFile/public long downloadFile(final String remoteFile/' src/main/java/me/legrange/mikrotik/impl/ApiConnectionImpl.java
       - name: Test with upstream Java 7 source level
         run: mvn -B clean test --file pom.xml
+      - name: Persist Java 7 compatibility fix
+        shell: bash
+        run: |
+          if ! git diff --quiet -- src/main/java/me/legrange/mikrotik/impl/ApiConnectionImpl.java; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/main/java/me/legrange/mikrotik/impl/ApiConnectionImpl.java
+            git commit -m "fix: preserve Java 7 source compatibility"
+            git push origin HEAD:upstream/api-connection-hardening
+          fi
