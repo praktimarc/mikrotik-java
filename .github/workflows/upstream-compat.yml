@@ -14,5 +14,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '8'
+      - name: Apply Java 7 compatibility probe
+        shell: bash
+        run: |
+          sed -i 's/public long downloadFile(String remoteFile/public long downloadFile(final String remoteFile/' src/main/java/me/legrange/mikrotik/impl/ApiConnectionImpl.java
       - name: Test with upstream Java 7 source level
         run: mvn -B clean test --file pom.xml
