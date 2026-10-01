@@ -86,6 +86,67 @@ Before transfer, an existing final target and stale sibling `.part` file are rem
 
 The existing `execute()` methods remain text-oriented and keep their existing `Map<String, String>` behavior. Binary upload and a RouterOS pre-7.13 small-file fallback are not included in this release.
 
+## Connection concurrency and failure handling
+
+The current source tree hardens one `ApiConnection` for concurrent use without introducing a second public dispatcher or command-handle API. The published release version remains `3.0.8-praktimarc.2` until a separate release step is performed.
+
+Multiple synchronous, asynchronous, and binary file-read operations may be active on one connection at the same time. Complete RouterOS command sentences are serialized internally on the shared output stream, so words from two commands cannot interleave. The lock covers only the command write and fatal send transition; it is not held while waiting for RouterOS replies.
+
+Command registrations are terminal and cleaned up before terminal callbacks. `!done` completes a command, while `!trap` and the retained legacy `!halt` compatibility path fail that command. A local synchronous timeout removes its registration but does not automatically issue RouterOS `/cancel`.
+
+Fatal EOF/socket loss, unrecoverable protocol/framing errors, RouterOS `!fatal`, and fatal send failures terminate the complete session and fail all still-active operations with `ApiConnectionException`. A send-side `IOException` marks the connection failed before the internal write lock is released, so a writer already waiting for that lock cannot write another command onto the broken session.
+
+`close()` is idempotent in the built-in implementation. Intentional close terminates active operations but is distinct from unexpected fatal loss and therefore does not trigger `ConnectionListener`.
+
+### Connection loss notification
+
+Applications that need to observe an unexpected session loss even when no command is active can register a `ConnectionListener`:
+
+```java
+con.addConnectionListener(cause ->
+        System.err.println("RouterOS API connection lost: " + cause.getMessage()));
+```
+
+A listener registered after the connection has already entered its fatal failed state is notified immediately with the retained failure. Duplicate registration of the same listener instance does not duplicate the notification, and removal is idempotent.
+
+There is no automatic reconnect, command replay, or transparent session replacement in this low-level library.
+
+### Public exception types
+
+Consumers should catch the stable public package types rather than compile against `me.legrange.mikrotik.impl.*`:
+
+```java
+try {
+    con.execute("/system/resource/print");
+} catch (ApiCommandException ex) {
+    System.err.println("RouterOS rejected tag " + ex.getTag()
+            + ": " + ex.getMessage());
+} catch (ApiDataException ex) {
+    System.err.println("RouterOS API data could not be interpreted: " + ex.getMessage());
+} catch (ApiConnectionException ex) {
+    System.err.println("RouterOS API connection failed: " + ex.getMessage());
+}
+```
+
+- `ApiConnectionException` represents connection, transport, or session-fatal failure.
+- `ApiCommandException` represents a RouterOS command error and exposes tag/category metadata.
+- `ApiDataException` represents malformed or inconsistent API data when the failure can be scoped without losing session routing.
+
+`ApiCommandException.hasCategory()` distinguishes a real RouterOS category `0` from an omitted category; `getCategory()` remains integer-compatible and returns `0` when no category was supplied.
+
+### RouterOS reply vocabulary
+
+The dispatcher recognizes the current native API reply words used by this fork:
+
+- `!re` — command data;
+- `!empty` — valid no-data response introduced by RouterOS 7.18; it is non-terminal and the command remains active until `!done`;
+- `!done` — normal command completion;
+- `!trap` — RouterOS command error;
+- `!halt` — legacy/compatibility handling equivalent to a command error;
+- `!fatal` — fatal session error, including best-effort extraction of free-word diagnostics.
+
+Unknown reply words, duplicate/untrustworthy tag routing, reserved/unsupported control bytes, truncated framing, and other unrecoverable protocol states fail the connection instead of being silently ignored. A malformed but uniquely tagged command reply can be failed locally with `ApiDataException` when routing remains trustworthy.
+
 ## Upstream project
 
 The original project is maintained by Gideon Le Grange at [GideonLeGrange/mikrotik-java](https://github.com/GideonLeGrange/mikrotik-java). Upstream remains the source for the original library design and public API. Suitable fixes from this fork may be contributed upstream separately from fork-specific release infrastructure.
@@ -101,7 +162,7 @@ These examples should illustrate how to use this library. Please note that I ass
 Some things to consider when debugging your API calls are:
 * The RouterOS API does not support auto-completion. You need to write out command and parameter names. For example, you can't say `/ip/hotspot/user/add name=john add=10.0.0.1`, you need to write out `address`.
 * You need to quote values with spaces in. You can't say `name=Joe Blogs`, you need to use `name="Joe Blogs"`
-* Exceptions with a root cause of `ApiCommandException` are errors received from the remote RouterOS device and contain the error message received. 
+* RouterOS command errors are exposed directly as the public `ApiCommandException`; connection and malformed-data failures use `ApiConnectionException` and `ApiDataException` respectively.
 
 ## Opening a connection
 Here is a simple example: Connect to a router and reboot it. 
@@ -261,7 +322,7 @@ String tag = con.execute("/interface/wireless/monitor .id=wlan1 return signal-to
 
 The `ResultListener` interface has three methods the user needs to implement:
 * `receive()` is called to receive results produced by the router from the API. 
-* `error()` is called when an exception is raised based on a 'trap' received from the router or another (typically connection) problem.
+* `error()` is called when an exception is raised based on a RouterOS command error or another API failure.
 * `completed()` is called when the router has indicated that the command has completed or has been cancelled. 
 
 The above command will run and send results asynchronously as they become available, until it is canceled. The command (identified by the unique String returned) is canceled like this:
@@ -287,7 +348,7 @@ The default command timeout, if none is set by the user, is 60 seconds.
 
 # References
 
-The RouterOS API is documented here: http://wiki.mikrotik.com/wiki/Manual:API
+The RouterOS native API is documented by MikroTik at https://help.mikrotik.com/docs/spaces/ROS/pages/47579160/API .
 
 # Licence
 
