@@ -8,6 +8,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -96,6 +97,24 @@ final class RouterOsTestServer implements AutoCloseable {
         Collections.addAll(words, rawAttributes);
         words.add(text(".tag=" + tag));
         writeSentence(words);
+    }
+
+    synchronized void replyWords(byte[]... words) throws IOException {
+        writeSentence(Arrays.asList(words));
+    }
+
+    synchronized void replyFatal(String... words) throws IOException {
+        List<byte[]> reply = new ArrayList<>();
+        reply.add(text("!fatal"));
+        for (String word : words) {
+            reply.add(text(word));
+        }
+        writeSentence(reply);
+    }
+
+    synchronized void writeRawBytes(byte[] bytes) throws IOException {
+        out.write(bytes);
+        out.flush();
     }
 
     void assertHealthy() throws Exception {
