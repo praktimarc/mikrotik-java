@@ -29,9 +29,9 @@ public class ApiConnectionLifecycleTest {
     @Test
     public void doneRemovesTextRegistrationBeforeCompletedCallback() throws Exception {
         ApiConnectionImpl connection = newConnection();
-        Map<String, ResultListener> listeners = textListeners(connection);
-        String tag = "done-before-callback";
-        AtomicBoolean removedDuringCallback = new AtomicBoolean(false);
+        final Map<String, ResultListener> listeners = textListeners(connection);
+        final String tag = "done-before-callback";
+        final AtomicBoolean removedDuringCallback = new AtomicBoolean(false);
         ResultListener listener = new NoopResultListener() {
             @Override
             public void completed() {
@@ -79,8 +79,8 @@ public class ApiConnectionLifecycleTest {
         ApiConnectionImpl connection = newConnection();
         Map<String, ResultListener> listeners = textListeners(connection);
         String tag = "trap-then-done";
-        AtomicInteger errors = new AtomicInteger();
-        AtomicInteger completions = new AtomicInteger();
+        final AtomicInteger errors = new AtomicInteger();
+        final AtomicInteger completions = new AtomicInteger();
         listeners.put(tag, new NoopResultListener() {
             @Override
             public void error(MikrotikApiException ex) {
@@ -132,9 +132,9 @@ public class ApiConnectionLifecycleTest {
     @Test
     public void doneRemovesBinaryRegistrationBeforeCompletedCallback() throws Exception {
         ApiConnectionImpl connection = newConnection();
-        Map<String, BinaryResultListener> listeners = binaryListeners(connection);
-        String tag = "binary-done";
-        AtomicBoolean removedDuringCallback = new AtomicBoolean(false);
+        final Map<String, BinaryResultListener> listeners = binaryListeners(connection);
+        final String tag = "binary-done";
+        final AtomicBoolean removedDuringCallback = new AtomicBoolean(false);
         BinaryResultListener listener = new BinaryResultListener() {
             @Override
             public void receive(byte[] data) {
@@ -159,9 +159,9 @@ public class ApiConnectionLifecycleTest {
 
     private static void assertTextErrorRemovesBeforeCallback(String type) throws Exception {
         ApiConnectionImpl connection = newConnection();
-        Map<String, ResultListener> listeners = textListeners(connection);
-        String tag = type.substring(1) + "-before-callback";
-        AtomicBoolean removedDuringCallback = new AtomicBoolean(false);
+        final Map<String, ResultListener> listeners = textListeners(connection);
+        final String tag = type.substring(1) + "-before-callback";
+        final AtomicBoolean removedDuringCallback = new AtomicBoolean(false);
         ResultListener listener = new NoopResultListener() {
             @Override
             public void error(MikrotikApiException ex) {
