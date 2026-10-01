@@ -2,51 +2,84 @@ package me.legrange.mikrotik.impl;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.UnknownHostException;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.LinkedList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.SocketFactory;
 import me.legrange.mikrotik.ApiConnection;
 import me.legrange.mikrotik.ApiConnectionException;
+import me.legrange.mikrotik.ApiDataException;
 import me.legrange.mikrotik.ConnectionListener;
 import me.legrange.mikrotik.MikrotikApiException;
 import me.legrange.mikrotik.ResultListener;
 
 /**
- * The Mikrotik API connection implementation. This is the class used to connect
- * to a remote Mikrotik and send commands to it.
- *
- * @author GideonLeGrange
+ * Implementation of the API connection. Internal to the library.
  */
 public final class ApiConnectionImpl extends ApiConnection {
 
-    /**
-     * Create a new API connection to the give device on the supplied port
-     *
-     * @param fact The socket factory used to construct the connection socket.
-     * @param host The host to which to connect.
-     * @param port The TCP port to use.
-     * @param timeOut The connection timeout
-     * @return The ApiConnection
-     * @throws me.legrange.mikrotik.ApiConnectionException Thrown if there is a
-     * problem connecting
-     */
-    public static ApiConnection connect(SocketFactory fact, String host, int port, int timeOut) throws ApiConnectionException {
-        ApiConnectionImpl con = new ApiConnectionImpl();
-        con.open(host, port, fact, timeOut);
-        return con;
+    private enum ConnectionState {
+        CONNECTED,
+        CLOSED,
+        FAILED
+    }
+
+    private static final int DEFAULT_COMMAND_TIMEOUT = 60000;
+
+    private final Object lifecycleLock = new Object();
+    private final Object writeLock = new Object();
+    private final Map<String, ResultListener> listeners = new ConcurrentHashMap<>();
+    private final Map<String, BinaryResultListener> binaryListeners = new ConcurrentHashMap<>();
+    private final Set<ConnectionListener> connectionListeners = new HashSet<>();
+    private final AtomicInteger tag = new AtomicInteger();
+    private final BlockingQueue<RawSentence> queue = new ArrayBlockingQueue<>(40);
+
+    private volatile ConnectionState state = ConnectionState.CLOSED;
+    private volatile ApiConnectionException fatalCause;
+    private volatile int timeout = DEFAULT_COMMAND_TIMEOUT;
+    private Socket socket;
+    private DataInputStream in;
+    private DataOutputStream out;
+    private Thread readerThread;
+    private Thread processorThread;
+
+    ApiConnectionImpl() {
+    }
+
+    @Override
+    protected void connect(SocketFactory factory, String host, int port, int timeout) throws ApiConnectionException {
+        synchronized (lifecycleLock) {
+            if (state == ConnectionState.CONNECTED) {
+                throw new ApiConnectionException("Already connected");
+            }
+            try {
+                socket = factory.createSocket(host, port);
+                socket.setSoTimeout(timeout);
+                in = new DataInputStream(socket.getInputStream());
+                out = new DataOutputStream(socket.getOutputStream());
+                state = ConnectionState.CONNECTED;
+                fatalCause = null;
+                startThreads();
+            } catch (IOException ex) {
+                cleanupTransport();
+                throw new ApiConnectionException("Error connecting to " + host + ":" + port, ex);
+            }
+        }
     }
 
     @Override
@@ -55,58 +88,12 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
-    public void addConnectionListener(ConnectionListener listener) {
-        if (listener == null) {
-            throw new NullPointerException("listener");
-        }
-        ApiConnectionException failure = null;
-        synchronized (lifecycleLock) {
-            if (containsConnectionListener(listener)) {
-                return;
-            }
-            if (state == ConnectionState.CLOSED) {
-                return;
-            }
-            connectionListeners.add(listener);
-            if (state == ConnectionState.FAILED) {
-                failure = fatalFailure;
-            }
-        }
-        if (failure != null) {
-            notifyConnectionListener(listener, failure);
-        }
-    }
-
-    @Override
-    public void removeConnectionListener(ConnectionListener listener) {
-        if (listener == null) {
-            return;
-        }
-        synchronized (lifecycleLock) {
-            for (int i = 0; i < connectionListeners.size(); i++) {
-                if (connectionListeners.get(i) == listener) {
-                    connectionListeners.remove(i);
-                    return;
-                }
-            }
-        }
-    }
-
-    @Override
     public void login(String username, String password) throws MikrotikApiException {
-        if (username.trim().isEmpty()) {
-            throw new ApiConnectionException("API username cannot be empty");
-        }
-        Command cmd = new Command("/login");
-        cmd.addParameter("name", username);
-        cmd.addParameter("password", password);
-        List<Map<String, String>> list = execute(cmd, timeout);
-        if (!list.isEmpty()) {
-            Map<String, String> res = list.get(0);
-            if (res.containsKey("ret")) {
-                String hash = res.get("ret");
-                String chal = Util.hexStrToStr("00") + new String(password.toCharArray()) + Util.hexStrToStr(hash);
-                chal = Util.hashMD5(chal);
+        List<Map<String, String>> result = execute("/login name=" + username + " password=" + password);
+        if (!result.isEmpty()) {
+            String ret = result.get(0).get("ret");
+            if (ret != null) {
+                String chal = Util.hexStrToStr(Util.hashMD5((char) 0 + password + Util.hexStrToStr(ret)));
                 execute("/login name=" + username + " response=00" + chal);
             }
         }
@@ -123,7 +110,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
-    public long downloadFile(String remoteFile, Path localFile) throws MikrotikApiException, IOException {
+    public long downloadFile(final String remoteFile, Path localFile) throws MikrotikApiException, IOException {
         if (remoteFile == null) {
             throw new NullPointerException("remoteFile");
         }
@@ -163,443 +150,382 @@ public final class ApiConnectionImpl extends ApiConnection {
     @Override
     public void close() throws ApiConnectionException {
         TerminalSnapshot snapshot;
-        ApiConnectionException closeCause = new ApiConnectionException("API connection closed");
         synchronized (lifecycleLock) {
-            if (state != ConnectionState.CONNECTED) {
+            if (state == ConnectionState.CLOSED) {
+                return;
+            }
+            if (state == ConnectionState.FAILED) {
+                cleanupTransport();
                 return;
             }
             state = ConnectionState.CLOSED;
-            snapshot = drainCommandsLocked();
-            connectionListeners.clear();
+            snapshot = drainActiveCommands(new ApiConnectionException("Connection closed"), false);
         }
-
-        ApiConnectionException shutdownFailure = shutdownTransport();
-        notifyCommandFailures(snapshot, closeCause);
-        if (shutdownFailure != null) {
-            throw shutdownFailure;
-        }
+        cleanupTransport();
+        signalTerminal(snapshot);
     }
 
-    private List<Map<String, String>> execute(Command cmd, int timeout) throws MikrotikApiException {
-        SyncListener l = new SyncListener();
-        String tag = execute(cmd, l);
-        try {
-            return l.getResults(timeout);
-        } finally {
-            removeTextListener(tag, l);
+    @Override
+    public void addConnectionListener(ConnectionListener listener) {
+        if (listener == null) {
+            throw new NullPointerException("listener");
         }
-    }
-
-    private String execute(Command cmd, ResultListener lis) throws MikrotikApiException {
-        String tag = nextTag();
-        cmd.setTag(tag);
-        registerTextListener(tag, lis);
-        try {
-            writeCommand(cmd);
-        } catch (MikrotikApiException ex) {
-            removeTextListener(tag, lis);
-            if (ex instanceof ApiConnectionException) {
-                failConnection((ApiConnectionException) ex);
-            }
-            throw ex;
-        }
-        return tag;
-    }
-
-    private byte[] executeBinaryRead(Command cmd, int timeout) throws MikrotikApiException {
-        SyncBinaryListener l = new SyncBinaryListener();
-        String tag = nextTag();
-        cmd.setTag(tag);
-        registerBinaryListener(tag, l);
-        try {
-            writeCommand(cmd);
-        } catch (MikrotikApiException ex) {
-            removeBinaryListener(tag, l);
-            if (ex instanceof ApiConnectionException) {
-                failConnection((ApiConnectionException) ex);
-            }
-            throw ex;
-        }
-        try {
-            return l.getResult(timeout);
-        } finally {
-            removeBinaryListener(tag, l);
-        }
-    }
-
-    private void writeCommand(Command cmd) throws MikrotikApiException {
-        ApiConnectionException sendFailure = null;
-        FatalTransition transition = null;
-        synchronized (writeLock) {
-            synchronized (lifecycleLock) {
-                requireConnectedLocked();
-            }
-            try {
-                Util.write(cmd, out);
-                return;
-            } catch (UnsupportedEncodingException ex) {
-                rollbackCommandRegistration(cmd.getTag());
-                throw new ApiDataException(ex.getMessage(), ex);
-            } catch (IOException ex) {
-                rollbackCommandRegistration(cmd.getTag());
-                sendFailure = new ApiConnectionException(ex.getMessage(), ex);
-                transition = beginFatalFailure(sendFailure);
+        ApiConnectionException immediate = null;
+        synchronized (lifecycleLock) {
+            if (state == ConnectionState.FAILED) {
+                immediate = fatalCause;
+            } else if (state != ConnectionState.CLOSED) {
+                connectionListeners.add(listener);
             }
         }
-        if (transition != null) {
-            completeFatalFailure(transition);
+        if (immediate != null) {
+            notifyConnectionListener(listener, immediate);
         }
-        throw sendFailure;
     }
 
-    private void rollbackCommandRegistration(String tag) {
-        if (tag == null) {
+    @Override
+    public void removeConnectionListener(ConnectionListener listener) {
+        if (listener == null) {
             return;
         }
-        listeners.remove(tag);
-        binaryListeners.remove(tag);
-    }
-
-    private void registerTextListener(String tag, ResultListener listener) throws ApiConnectionException {
         synchronized (lifecycleLock) {
-            requireConnectedLocked();
-            listeners.put(tag, listener);
+            connectionListeners.remove(listener);
         }
     }
 
-    private void registerBinaryListener(String tag, BinaryResultListener listener) throws ApiConnectionException {
-        synchronized (lifecycleLock) {
-            requireConnectedLocked();
-            binaryListeners.put(tag, listener);
+    private String execute(Command command, ResultListener listener) throws MikrotikApiException {
+        String commandTag = nextTag();
+        command.setTag(commandTag);
+        registerText(commandTag, listener);
+        try {
+            writeCommand(command);
+            return commandTag;
+        } catch (MikrotikApiException ex) {
+            listeners.remove(commandTag, listener);
+            throw ex;
         }
     }
 
-    private void requireConnectedLocked() throws ApiConnectionException {
-        if (state == ConnectionState.CONNECTED) {
-            return;
+    private List<Map<String, String>> execute(Command command, int timeout) throws MikrotikApiException {
+        SyncListener listener = new SyncListener();
+        String commandTag = null;
+        try {
+            commandTag = execute(command, listener);
+            return listener.getResults(timeout);
+        } finally {
+            if (commandTag != null) {
+                listeners.remove(commandTag, listener);
+            }
         }
-        if (state == ConnectionState.FAILED) {
-            throw new ApiConnectionException("API connection is no longer usable after a fatal failure", fatalFailure);
-        }
-        throw new ApiConnectionException("Not/no longer connected to remote Mikrotik");
     }
 
-    private boolean removeTextListener(String tag, ResultListener listener) {
-        return listeners.remove(tag, listener);
-    }
-
-    private boolean removeBinaryListener(String tag, BinaryResultListener listener) {
-        return binaryListeners.remove(tag, listener);
+    private byte[] executeBinaryRead(Command command, int timeout) throws MikrotikApiException {
+        String commandTag = nextTag();
+        command.setTag(commandTag);
+        SyncBinaryListener listener = new SyncBinaryListener();
+        registerBinary(commandTag, listener);
+        try {
+            writeCommand(command);
+            return listener.getData(timeout);
+        } finally {
+            binaryListeners.remove(commandTag, listener);
+        }
     }
 
     private long getRemoteFileSize(String remoteFile) throws MikrotikApiException {
-        Command cmd = new Command("/file/print");
-        cmd.addProperty("size");
-        cmd.addQuery("?name=" + remoteFile);
-        List<Map<String, String>> results = execute(cmd, timeout);
-        if (results.size() != 1) {
-            throw new ApiDataException("Expected exactly one RouterOS file named '" + remoteFile
-                    + "' but found " + results.size());
+        Command command = new Command("/file/print");
+        command.addQuery("?name=" + remoteFile);
+        command.addParameter("=.proplist=size");
+        List<Map<String, String>> rows = execute(command, timeout);
+        if (rows.size() != 1) {
+            throw new ApiDataException("Expected exactly one RouterOS file named '" + remoteFile + "'");
         }
-        String value = results.get(0).get("size");
-        if (value == null) {
-            throw new ApiDataException("RouterOS file response contains no size");
+        String sizeValue = rows.get(0).get("size");
+        if (sizeValue == null) {
+            throw new ApiDataException("RouterOS file response did not contain size for '" + remoteFile + "'");
         }
         try {
-            long size = Long.parseLong(value);
+            long size = Long.parseLong(sizeValue);
             if (size < 0) {
-                throw new ApiDataException("RouterOS file size must not be negative");
+                throw new ApiDataException("Invalid negative RouterOS file size: " + sizeValue);
             }
             return size;
         } catch (NumberFormatException ex) {
-            throw new ApiDataException("Invalid RouterOS file size '" + value + "'", ex);
+            throw new ApiDataException("Invalid RouterOS file size: " + sizeValue, ex);
         }
     }
 
     private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotikApiException {
-        if (offset < 0) {
-            throw new ApiDataException("File offset must not be negative");
-        }
-        if (chunkSize < 1 || chunkSize > FileDownload.CHUNK_SIZE) {
-            throw new ApiDataException("File read chunk size must be between 1 and " + FileDownload.CHUNK_SIZE);
-        }
-        Command cmd = new Command("/file/read");
-        cmd.addParameter("file", remoteFile);
-        cmd.addParameter("offset", Long.toString(offset));
-        cmd.addParameter("chunk-size", Integer.toString(chunkSize));
-        return executeBinaryRead(cmd, timeout);
+        Command command = new Command("/file/read");
+        command.addParameter("=file=" + remoteFile);
+        command.addParameter("=offset=" + offset);
+        command.addParameter("=chunk-size=" + chunkSize);
+        return executeBinaryRead(command, timeout);
     }
 
-    private ApiConnectionImpl() {
-        this.listeners = new ConcurrentHashMap<>();
-        this.binaryListeners = new ConcurrentHashMap<>();
-    }
-
-    /**
-     * Start the API. Connects to the Mikrotik
-     */
-    private void open(String host, int port, SocketFactory fact, int conTimeout) throws ApiConnectionException {
-        try {
-            InetAddress ia = InetAddress.getByName(host.trim());
-            sock = fact.createSocket();
-            sock.connect(new InetSocketAddress(ia, port), conTimeout);
-            in = new DataInputStream(sock.getInputStream());
-            out = new DataOutputStream(sock.getOutputStream());
-            synchronized (lifecycleLock) {
-                state = ConnectionState.CONNECTED;
-                fatalFailure = null;
-            }
-            reader = new Reader();
-            reader.setDaemon(true);
-            reader.start();
-            processor = new Processor();
-            processor.setDaemon(true);
-            processor.start();
-        } catch (UnknownHostException ex) {
-            synchronized (lifecycleLock) {
-                state = ConnectionState.CLOSED;
-            }
-            throw new ApiConnectionException(String.format("Unknown host '%s'", host), ex);
-        } catch (IOException ex) {
-            synchronized (lifecycleLock) {
-                state = ConnectionState.CLOSED;
-            }
-            shutdownTransport();
-            throw new ApiConnectionException(String.format("Error connecting to %s:%d : %s", host, port, ex.getMessage()), ex);
-        }
-    }
-
-    private synchronized String nextTag() {
-        return Integer.toHexString(_tag.incrementAndGet());
-    }
-
-    private void failConnection(ApiConnectionException failure) {
-        FatalTransition transition = beginFatalFailure(failure);
-        if (transition != null) {
-            completeFatalFailure(transition);
-        }
-    }
-
-    private FatalTransition beginFatalFailure(ApiConnectionException failure) {
+    private void registerText(String commandTag, ResultListener listener) throws ApiConnectionException {
         synchronized (lifecycleLock) {
-            if (state != ConnectionState.CONNECTED) {
-                return null;
+            ensureConnected();
+            listeners.put(commandTag, listener);
+        }
+    }
+
+    private void registerBinary(String commandTag, BinaryResultListener listener) throws ApiConnectionException {
+        synchronized (lifecycleLock) {
+            ensureConnected();
+            binaryListeners.put(commandTag, listener);
+        }
+    }
+
+    private void writeCommand(Command command) throws MikrotikApiException {
+        TerminalSnapshot failureSnapshot = null;
+        ApiConnectionException writeFailure = null;
+        synchronized (writeLock) {
+            ensureConnected();
+            try {
+                Util.write(command, out);
+            } catch (ApiConnectionException ex) {
+                rollbackRegistration(command.getTag());
+                writeFailure = ex;
+                synchronized (lifecycleLock) {
+                    failureSnapshot = transitionToFailedLocked(ex);
+                }
+            } catch (MikrotikApiException ex) {
+                rollbackRegistration(command.getTag());
+                throw ex;
             }
-            state = ConnectionState.FAILED;
-            fatalFailure = failure;
-            return new FatalTransition(
-                    failure,
-                    drainCommandsLocked(),
-                    new ArrayList<>(connectionListeners));
+        }
+        if (writeFailure != null) {
+            finishFailedTransition(failureSnapshot);
+            throw writeFailure;
         }
     }
 
-    private void completeFatalFailure(FatalTransition transition) {
-        ApiConnectionException shutdownFailure = shutdownTransport();
-        if (shutdownFailure != null) {
-            transition.failure.addSuppressed(shutdownFailure);
+    private void rollbackRegistration(String commandTag) {
+        if (commandTag == null) {
+            return;
         }
-        notifyCommandFailures(transition.commands, transition.failure);
-        for (ConnectionListener listener : transition.connectionListeners) {
-            notifyConnectionListener(listener, transition.failure);
-        }
+        listeners.remove(commandTag);
+        binaryListeners.remove(commandTag);
     }
 
-    private TerminalSnapshot drainCommandsLocked() {
-        List<ResultListener> text = new ArrayList<>(listeners.values());
-        List<BinaryResultListener> binary = new ArrayList<>(binaryListeners.values());
+    private void ensureConnected() throws ApiConnectionException {
+        if (state == ConnectionState.CONNECTED) {
+            return;
+        }
+        ApiConnectionException failure = fatalCause;
+        if (failure != null) {
+            throw new ApiConnectionException("Connection has failed", failure);
+        }
+        throw new ApiConnectionException("Not connected");
+    }
+
+    private String nextTag() {
+        return Integer.toString(tag.incrementAndGet());
+    }
+
+    private void startThreads() {
+        readerThread = new Thread(new Reader(), "Mikrotik API reader");
+        readerThread.setDaemon(true);
+        processorThread = new Thread(new Processor(), "Mikrotik API processor");
+        processorThread.setDaemon(true);
+        readerThread.start();
+        processorThread.start();
+    }
+
+    private void failConnection(ApiConnectionException cause) {
+        TerminalSnapshot snapshot;
+        synchronized (lifecycleLock) {
+            snapshot = transitionToFailedLocked(cause);
+        }
+        finishFailedTransition(snapshot);
+    }
+
+    private TerminalSnapshot transitionToFailedLocked(ApiConnectionException cause) {
+        if (state != ConnectionState.CONNECTED) {
+            return null;
+        }
+        state = ConnectionState.FAILED;
+        fatalCause = cause;
+        return drainActiveCommands(cause, true);
+    }
+
+    private void finishFailedTransition(TerminalSnapshot snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        cleanupTransport();
+        signalTerminal(snapshot);
+    }
+
+    private TerminalSnapshot drainActiveCommands(ApiConnectionException cause, boolean notifyLifecycle) {
+        Map<String, ResultListener> text = new LinkedHashMap<>(listeners);
         listeners.clear();
+        Map<String, BinaryResultListener> binary = new LinkedHashMap<>(binaryListeners);
         binaryListeners.clear();
-        return new TerminalSnapshot(text, binary);
+        List<ConnectionListener> lifecycle = notifyLifecycle
+                ? new ArrayList<>(connectionListeners) : Collections.<ConnectionListener>emptyList();
+        connectionListeners.clear();
+        return new TerminalSnapshot(cause, text, binary, lifecycle);
     }
 
-    private void notifyCommandFailures(TerminalSnapshot snapshot, ApiConnectionException failure) {
-        for (ResultListener listener : snapshot.textListeners) {
+    private void signalTerminal(TerminalSnapshot snapshot) {
+        for (ResultListener listener : snapshot.text.values()) {
             try {
-                listener.error(failure);
+                listener.error(snapshot.cause);
             } catch (RuntimeException ignored) {
             }
         }
-        for (BinaryResultListener listener : snapshot.binaryListeners) {
+        for (BinaryResultListener listener : snapshot.binary.values()) {
             try {
-                listener.error(failure);
+                listener.error(snapshot.cause);
             } catch (RuntimeException ignored) {
             }
         }
+        for (ConnectionListener listener : snapshot.lifecycle) {
+            notifyConnectionListener(listener, snapshot.cause);
+        }
     }
 
-    private void notifyConnectionListener(ConnectionListener listener, ApiConnectionException failure) {
+    private void notifyConnectionListener(ConnectionListener listener, ApiConnectionException cause) {
         try {
-            listener.connectionLost(failure);
+            listener.connectionLost(cause);
         } catch (RuntimeException ignored) {
         }
     }
 
-    private boolean containsConnectionListener(ConnectionListener candidate) {
-        for (ConnectionListener listener : connectionListeners) {
-            if (listener == candidate) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private ApiConnectionException shutdownTransport() {
-        if (processor != null) {
-            processor.interrupt();
-        }
-        if (reader != null) {
+    private void cleanupTransport() {
+        Thread reader = readerThread;
+        Thread processor = processorThread;
+        if (reader != null && reader != Thread.currentThread()) {
             reader.interrupt();
         }
-
-        IOException first = null;
-        first = closeSocket(first);
-        first = closeInput(first);
-        first = closeOutput(first);
-        if (first == null) {
-            return null;
+        if (processor != null && processor != Thread.currentThread()) {
+            processor.interrupt();
         }
-        return new ApiConnectionException(String.format("Error closing socket: %s", first.getMessage()), first);
-    }
-
-    private IOException closeSocket(IOException first) {
-        if (sock != null) {
+        closeQuietly(in);
+        closeQuietly(out);
+        Socket current = socket;
+        if (current != null) {
             try {
-                sock.close();
-            } catch (IOException ex) {
-                if (first == null) {
-                    first = ex;
-                }
+                current.close();
+            } catch (IOException ignored) {
             }
         }
-        return first;
     }
 
-    private IOException closeInput(IOException first) {
-        if (in != null) {
+    private static void closeQuietly(java.io.Closeable closeable) {
+        if (closeable != null) {
             try {
-                in.close();
-            } catch (IOException ex) {
-                if (first == null) {
-                    first = ex;
-                }
+                closeable.close();
+            } catch (IOException ignored) {
             }
         }
-        return first;
     }
 
-    private IOException closeOutput(IOException first) {
-        if (out != null) {
-            try {
-                out.close();
-            } catch (IOException ex) {
-                if (first == null) {
-                    first = ex;
-                }
+    private void dispatch(Response response) throws MikrotikApiException {
+        String responseTag = response.getTag();
+        if (responseTag == null) {
+            throw new ApiDataException("RouterOS response did not contain a command tag");
+        }
+        ResultListener textListener = listeners.get(responseTag);
+        BinaryResultListener binaryListener = binaryListeners.get(responseTag);
+        if (textListener != null && binaryListener != null) {
+            throw new ApiDataException("RouterOS response tag is registered for multiple command types: " + responseTag);
+        }
+        if (textListener != null) {
+            dispatchText(responseTag, textListener, response);
+        } else if (binaryListener != null) {
+            dispatchBinary(responseTag, binaryListener, response);
+        }
+    }
+
+    private void dispatchText(String responseTag, ResultListener listener, Response response) throws MikrotikApiException {
+        if (response instanceof Result) {
+            listener.receive(((Result) response).getResult());
+        } else if (response instanceof Done) {
+            if (listeners.remove(responseTag, listener)) {
+                listener.completed();
+            }
+        } else if (response instanceof Error) {
+            if (listeners.remove(responseTag, listener)) {
+                listener.error(((Error) response).toException());
             }
         }
-        return first;
     }
 
-    private enum ConnectionState {
-        CONNECTED,
-        CLOSED,
-        FAILED
-    }
-
-    private static final class TerminalSnapshot {
-        private final List<ResultListener> textListeners;
-        private final List<BinaryResultListener> binaryListeners;
-
-        private TerminalSnapshot(List<ResultListener> textListeners, List<BinaryResultListener> binaryListeners) {
-            this.textListeners = textListeners;
-            this.binaryListeners = binaryListeners;
+    private void dispatchBinary(String responseTag, BinaryResultListener listener, Response response) throws MikrotikApiException {
+        try {
+            if (response instanceof Result) {
+                listener.receive(((Result) response).getBinaryValue("data"));
+            } else if (response instanceof Done) {
+                if (binaryListeners.remove(responseTag, listener)) {
+                    listener.completed();
+                }
+            } else if (response instanceof Error) {
+                if (binaryListeners.remove(responseTag, listener)) {
+                    listener.error(((Error) response).toException());
+                }
+            }
+        } catch (MikrotikApiException ex) {
+            if (binaryListeners.remove(responseTag, listener)) {
+                listener.error(ex);
+            }
         }
     }
 
-    private static final class FatalTransition {
-        private final ApiConnectionException failure;
-        private final TerminalSnapshot commands;
-        private final List<ConnectionListener> connectionListeners;
-
-        private FatalTransition(ApiConnectionException failure, TerminalSnapshot commands,
-                List<ConnectionListener> connectionListeners) {
-            this.failure = failure;
-            this.commands = commands;
-            this.connectionListeners = connectionListeners;
+    private void failTaggedCommand(String responseTag, MikrotikApiException cause) {
+        ResultListener text = listeners.remove(responseTag);
+        if (text != null) {
+            try {
+                text.error(cause);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        BinaryResultListener binary = binaryListeners.remove(responseTag);
+        if (binary != null) {
+            try {
+                binary.error(cause);
+            } catch (RuntimeException ignored) {
+            }
         }
     }
 
-    private Socket sock = null;
-    private DataOutputStream out = null;
-    private DataInputStream in = null;
-    private volatile ConnectionState state = ConnectionState.CLOSED;
-    private ApiConnectionException fatalFailure;
-    private Reader reader;
-    private Processor processor;
-    private final Object lifecycleLock = new Object();
-    private final Object writeLock = new Object();
-    private final Map<String, ResultListener> listeners;
-    private final Map<String, BinaryResultListener> binaryListeners;
-    private final List<ConnectionListener> connectionListeners = new ArrayList<>();
-    private final AtomicInteger _tag = new AtomicInteger(0);
-    private int timeout = ApiConnection.DEFAULT_COMMAND_TIMEOUT;
-
-    /**
-     * Thread to read complete raw RouterOS sentences from the socket.
-     */
-    private class Reader extends Thread {
-
-        private Reader() {
-            super("Mikrotik API Reader");
-        }
-
-        private RawSentence take() throws InterruptedException {
-            return queue.take();
-        }
-
+    private final class Reader implements Runnable {
         @Override
         public void run() {
-            while (isConnected()) {
+            while (state == ConnectionState.CONNECTED) {
                 try {
-                    queue.put(new RawSentence(Util.readSentence(in)));
-                } catch (ApiDataException ex) {
-                    failConnection(new ApiConnectionException(
-                            "RouterOS API protocol error: " + ex.getMessage(), ex));
+                    RawSentence sentence = RawSentence.read(in);
+                    queue.put(sentence);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
                     return;
                 } catch (ApiConnectionException ex) {
-                    if (isConnected()) {
+                    if (state == ConnectionState.CONNECTED) {
                         failConnection(ex);
                     }
                     return;
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
+                } catch (RuntimeException ex) {
+                    if (state == ConnectionState.CONNECTED) {
+                        failConnection(new ApiConnectionException("Unexpected RouterOS API reader failure", ex));
+                    }
                     return;
                 }
             }
         }
-
-        private final LinkedBlockingQueue<RawSentence> queue = new LinkedBlockingQueue<>();
     }
 
-    /**
-     * Thread to turn raw sentences into existing response objects and listeners.
-     */
-    private class Processor extends Thread {
-
-        private Processor() {
-            super("Mikrotik API Result Processor");
-        }
-
+    private final class Processor implements Runnable {
         @Override
         public void run() {
-            while (isConnected()) {
+            while (state == ConnectionState.CONNECTED || !queue.isEmpty()) {
                 try {
-                    RawSentence sentence = reader.take();
-                    if (!isConnected()) {
-                        return;
+                    RawSentence sentence = queue.poll(100, TimeUnit.MILLISECONDS);
+                    if (sentence == null) {
+                        continue;
                     }
-                    process(sentence);
+                    processSentence(sentence);
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
                     return;
@@ -607,268 +533,167 @@ public final class ApiConnectionImpl extends ApiConnection {
             }
         }
 
-        private void process(RawSentence sentence) {
-            final String type;
+        private void processSentence(RawSentence sentence) {
+            String type;
             try {
                 type = sentence.getType();
             } catch (ApiDataException ex) {
-                failProtocol(ex);
-                return;
-            }
-
-            if ("!fatal".equals(type)) {
-                try {
-                    failConnection(new ApiConnectionException(
-                            "RouterOS API fatal error: " + sentence.getFatalDiagnostic()));
-                } catch (ApiDataException ex) {
-                    failProtocol(ex);
-                }
-                return;
-            }
-
-            if (!isKnownReplyType(type)) {
-                failProtocol(new ApiDataException("unexpected response type"));
-                return;
-            }
-
-            final String tag;
-            try {
-                tag = sentence.getTag();
-            } catch (ApiDataException ex) {
-                failProtocol(ex);
+                failConnection(new ApiConnectionException("Invalid RouterOS API response", ex));
                 return;
             }
 
             if ("!empty".equals(type)) {
                 return;
             }
+            if ("!fatal".equals(type)) {
+                failConnection(new ApiConnectionException(sentence.getFatalMessage()));
+                return;
+            }
+            if (!RawSentence.isKnownResponseType(type)) {
+                failConnection(new ApiConnectionException("Unknown RouterOS API response type: " + type,
+                        new ApiDataException("Unknown RouterOS API response type: " + type)));
+                return;
+            }
 
-            BinaryResultListener binary = tag == null ? null : binaryListeners.get(tag);
-            if (binary != null) {
-                dispatchBinary(sentence, tag, binary);
+            String responseTag;
+            try {
+                responseTag = sentence.getTag();
+            } catch (ApiDataException ex) {
+                failConnection(new ApiConnectionException("Untrustworthy RouterOS API response routing", ex));
+                return;
+            }
+            if (responseTag == null) {
+                failConnection(new ApiConnectionException("RouterOS API response is missing a tag",
+                        new ApiDataException("RouterOS API response did not contain a command tag")));
                 return;
             }
 
             try {
                 dispatch(sentence.toTextResponse());
+            } catch (ApiDataException ex) {
+                failTaggedCommand(responseTag, ex);
             } catch (MikrotikApiException ex) {
-                failTaggedCommand(tag, ex);
-            }
-        }
-
-        private boolean isKnownReplyType(String type) {
-            switch (type) {
-                case "!re":
-                case "!done":
-                case "!trap":
-                case "!halt":
-                case "!empty":
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        private void failProtocol(ApiDataException failure) {
-            failConnection(new ApiConnectionException(
-                    "RouterOS API protocol error: " + failure.getMessage(), failure));
-        }
-
-        private void failTaggedCommand(String tag, MikrotikApiException failure) {
-            if (tag == null) {
-                if (failure instanceof ApiDataException) {
-                    failProtocol((ApiDataException) failure);
-                } else {
-                    failConnection(new ApiConnectionException(
-                            "RouterOS API response could not be processed", failure));
-                }
-                return;
-            }
-
-            ResultListener text = listeners.get(tag);
-            if (text != null && removeTextListener(tag, text)) {
-                text.error(failure);
-                return;
-            }
-
-            BinaryResultListener binary = binaryListeners.get(tag);
-            if (binary != null && removeBinaryListener(tag, binary)) {
-                binary.error(failure);
-            }
-        }
-
-        private void dispatchBinary(RawSentence sentence, String tag, BinaryResultListener l) {
-            try {
-                switch (sentence.getType()) {
-                    case "!re":
-                        l.receive(sentence.requireSingleRawAttribute("data"));
-                        break;
-                    case "!done":
-                        if (removeBinaryListener(tag, l)) {
-                            l.completed();
-                        }
-                        break;
-                    case "!trap":
-                    case "!halt":
-                        ApiCommandException commandError = new ApiCommandException((Error) sentence.toTextResponse());
-                        if (removeBinaryListener(tag, l)) {
-                            l.error(commandError);
-                        }
-                        break;
-                    default:
-                        ApiDataException dataError = new ApiDataException(
-                                "Unexpected binary response type '" + sentence.getType() + "'");
-                        if (removeBinaryListener(tag, l)) {
-                            l.error(dataError);
-                        }
-                        break;
-                }
-            } catch (MikrotikApiException ex) {
-                if (removeBinaryListener(tag, l)) {
-                    l.error(ex);
-                }
-            }
-        }
-
-        private void dispatch(Response res) {
-            if (res.getTag() != null) {
-                ResultListener l = listeners.get(res.getTag());
-                if (l != null) {
-                    if (res instanceof Result) {
-                        l.receive((Result) res);
-                    } else if (res instanceof Done) {
-                        if (removeTextListener(res.getTag(), l)) {
-                            if (l instanceof SyncListener) {
-                                ((SyncListener) l).completed((Done) res);
-                            } else {
-                                l.completed();
-                            }
-                        }
-                    } else if (res instanceof Error) {
-                        ApiCommandException commandError = new ApiCommandException((Error) res);
-                        if (removeTextListener(res.getTag(), l)) {
-                            l.error(commandError);
-                        }
-                    }
-                }
-            } else {
-                nextTag();
+                failConnection(new ApiConnectionException("Failed to process RouterOS API response", ex));
+            } catch (RuntimeException ex) {
+                failConnection(new ApiConnectionException("Unexpected RouterOS API processor failure", ex));
             }
         }
     }
 
-    private static class SyncBinaryListener implements BinaryResultListener {
+    private static final class TerminalSnapshot {
+        final ApiConnectionException cause;
+        final Map<String, ResultListener> text;
+        final Map<String, BinaryResultListener> binary;
+        final List<ConnectionListener> lifecycle;
 
-        @Override
-        public synchronized void receive(byte[] data) {
-            if (received) {
-                err = new ApiDataException("Binary command returned multiple data results");
-                complete = true;
-                notifyAll();
-                return;
-            }
-            this.data = Arrays.copyOf(data, data.length);
-            received = true;
+        TerminalSnapshot(ApiConnectionException cause, Map<String, ResultListener> text,
+                Map<String, BinaryResultListener> binary, List<ConnectionListener> lifecycle) {
+            this.cause = cause;
+            this.text = text;
+            this.binary = binary;
+            this.lifecycle = lifecycle;
         }
+    }
 
-        @Override
-        public synchronized void error(MikrotikApiException ex) {
-            err = ex;
-            complete = true;
-            notifyAll();
-        }
-
-        @Override
-        public synchronized void completed() {
-            if (!received && err == null) {
-                err = new ApiDataException("Binary command completed without data");
-            }
-            complete = true;
-            notifyAll();
-        }
-
-        private byte[] getResult(int timeout) throws MikrotikApiException {
-            try {
-                synchronized (this) {
-                    int waitTime = timeout;
-                    while (!complete && waitTime > 0) {
-                        long start = System.currentTimeMillis();
-                        wait(waitTime);
-                        waitTime -= (int) (System.currentTimeMillis() - start);
-                    }
-                    if (!complete) {
-                        throw new ApiConnectionException(String.format("Command timed out after %d ms", timeout));
-                    }
-                }
-            } catch (InterruptedException ex) {
-                throw new ApiConnectionException(ex.getMessage(), ex);
-            }
-            if (err != null) {
-                throw err;
-            }
-            return data;
-        }
-
-        private byte[] data;
-        private MikrotikApiException err;
-        private boolean received;
+    private static final class SyncListener implements ResultListener {
+        private final List<Map<String, String>> results = new ArrayList<>();
+        private MikrotikApiException error;
         private boolean complete;
-    }
-
-    private static class SyncListener implements ResultListener {
 
         @Override
-        public synchronized void error(MikrotikApiException ex) {
-            this.err = ex;
-            this.complete = true;
-            notifyAll();
-        }
-
-        @Override
-        public synchronized void completed() {
-            complete = true;
-            notifyAll();
-        }
-
-        synchronized void completed(Done done) {
-            if (done.getHash() != null) {
-                Result res = new Result();
-                res.put("ret", done.getHash());
-                results.add(res);
-            }
-            complete = true;
-            notifyAll();
-        }
-
-        @Override
-        public void receive(Map<String, String> result) {
+        public synchronized void receive(Map<String, String> result) {
             results.add(result);
         }
 
-        private List<Map<String, String>> getResults(int timeout) throws MikrotikApiException {
-            try {
-                synchronized (this) {
-                    int waitTime = timeout;
-                    while (!complete && (waitTime > 0)) {
-                        long start = System.currentTimeMillis();
-                        wait(waitTime);
-                        waitTime = waitTime - (int) (System.currentTimeMillis() - start);
-                        if ((waitTime <= 0) && !complete) {
-                            err = new ApiConnectionException(String.format("Command timed out after %d ms", timeout));
-                        }
-                    }
-                }
-            } catch (InterruptedException ex) {
-                throw new ApiConnectionException(ex.getMessage(), ex);
+        @Override
+        public synchronized void error(MikrotikApiException ex) {
+            if (!complete) {
+                error = ex;
+                complete = true;
+                notifyAll();
             }
-            if (err != null) {
-                throw err;
+        }
+
+        @Override
+        public synchronized void completed() {
+            if (!complete) {
+                complete = true;
+                notifyAll();
+            }
+        }
+
+        synchronized List<Map<String, String>> getResults(int timeout) throws MikrotikApiException {
+            long deadline = System.currentTimeMillis() + timeout;
+            while (!complete) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    throw new ApiConnectionException("Command timed out");
+                }
+                try {
+                    wait(remaining);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new ApiConnectionException("Interrupted while waiting for command response", ex);
+                }
+            }
+            if (error != null) {
+                throw error;
             }
             return results;
         }
+    }
 
-        private final List<Map<String, String>> results = new LinkedList<>();
-        private MikrotikApiException err;
-        private boolean complete = false;
+    private static final class SyncBinaryListener implements BinaryResultListener {
+        private byte[] data;
+        private MikrotikApiException error;
+        private boolean complete;
+
+        @Override
+        public synchronized void receive(byte[] value) throws MikrotikApiException {
+            if (data != null) {
+                throw new ApiDataException("RouterOS binary response contained more than one data value");
+            }
+            data = value;
+        }
+
+        @Override
+        public synchronized void error(MikrotikApiException ex) {
+            if (!complete) {
+                error = ex;
+                complete = true;
+                notifyAll();
+            }
+        }
+
+        @Override
+        public synchronized void completed() {
+            if (!complete) {
+                complete = true;
+                notifyAll();
+            }
+        }
+
+        synchronized byte[] getData(int timeout) throws MikrotikApiException {
+            long deadline = System.currentTimeMillis() + timeout;
+            while (!complete) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    throw new ApiConnectionException("Command timed out");
+                }
+                try {
+                    wait(remaining);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    throw new ApiConnectionException("Interrupted while waiting for binary response", ex);
+                }
+            }
+            if (error != null) {
+                throw error;
+            }
+            if (data == null) {
+                throw new ApiDataException("RouterOS binary response did not contain data");
+            }
+            return data;
+        }
     }
 }
