@@ -152,7 +152,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
-    public void setTimeout(int timeout) throws MikrotikApiException {
+    public void setTimeout(int timeout) throws MikrotiikApiException {
         if (timeout > 0) {
             this.timeout = timeout;
         } else {
@@ -259,7 +259,7 @@ public final class ApiConnectionImpl extends ApiConnection {
         return binaryListeners.remove(tag, listener);
     }
 
-    private long getRemoteFileSize(String remoteFile) throws MikrotikApiException {
+    private long getRemoteFileSize(String remoteFile) throws MikrotiikApiException {
         Command cmd = new Command("/file/print");
         cmd.addProperty("size");
         cmd.addQuery("?name=" + remoteFile);
@@ -283,7 +283,7 @@ public final class ApiConnectionImpl extends ApiConnection {
         }
     }
 
-    private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotikApiException {
+    private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotiikApiException {
         if (offset < 0) {
             throw new ApiDataException("File offset must not be negative");
         }
@@ -543,19 +543,101 @@ public final class ApiConnectionImpl extends ApiConnection {
                     if (!isConnected()) {
                         return;
                     }
-                    String tag = sentence.getTag();
-                    BinaryResultListener binary = tag == null ? null : binaryListeners.get(tag);
-                    if (binary != null) {
-                        dispatchBinary(sentence, tag, binary);
-                    } else {
-                        dispatch(sentence.toTextResponse());
-                    }
+                    process(sentence);
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
                     return;
-                } catch (MikrotikApiException ex) {
-                    // Task 4 classifies processor-level protocol failures by scope.
                 }
+            }
+        }
+
+        private void process(RawSentence sentence) {
+            final String type;
+            try {
+                type = sentence.getType();
+            } catch (ApiDataException ex) {
+                failProtocol(ex);
+                return;
+            }
+
+            if ("!fatal".equals(type)) {
+                try {
+                    failConnection(new ApiConnectionException(
+                            "RouterOS API fatal error: " + sentence.getFatalDiagnostic()));
+                } catch (ApiDataException ex) {
+                    failProtocol(ex);
+                }
+                return;
+            }
+
+            if (!isKnownReplyType(type)) {
+                failProtocol(new ApiDataException("unexpected response type"));
+                return;
+            }
+
+            final String tag;
+            try {
+                tag = sentence.getTag();
+            } catch (ApiDataException ex) {
+                failProtocol(ex);
+                return;
+            }
+
+            if ("!empty".equals(type)) {
+                return;
+            }
+
+            BinaryResultListener binary = tag == null ? null : binaryListeners.get(tag);
+            if (binary != null) {
+                dispatchBinary(sentence, tag, binary);
+                return;
+            }
+
+            try {
+                dispatch(sentence.toTextResponse());
+            } catch (MikrotikApiException ex) {
+                failTaggedCommand(tag, ex);
+            }
+        }
+
+        private boolean isKnownReplyType(String type) {
+            switch (type) {
+                case "!re":
+                case "!done":
+                case "!trap":
+                case "!halt":
+                case "!empty":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void failProtocol(ApiDataException failure) {
+            failConnection(new ApiConnectionException(
+                    "RouterOS API protocol error: " + failure.getMessage(), failure));
+        }
+
+        private void failTaggedCommand(String tag, MikrotikApiException failure) {
+            if (tag == null) {
+                if (failure instanceof ApiDataException) {
+                    failProtocol((ApiDataException) failure);
+                } else {
+                    failConnection(new ApiConnectionException(
+                            "RouterOS API response could not be processed", failure));
+                }
+                return;
+            }
+
+            ResultListener text = listeners.get(tag);
+            if (text != null && removeTextListener(tag, text)) {
+                text.error(failure);
+                return;
+            }
+
+            BinaryResultListener binary = binaryListeners.get(tag);
+            if (binary != null && removeBinaryListener(tag, binary)) {
+                binary.error(failure);
             }
         }
 
