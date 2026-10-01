@@ -9,10 +9,13 @@ class Error extends Response {
 
     private String message;
     private int category;
+    private boolean categoryPresent;
 
     Error(String tag, String message, int category) {
         super(tag);
         this.message = message;
+        this.category = category;
+        this.categoryPresent = true;
     }
 
     Error() {
@@ -31,7 +34,12 @@ class Error extends Response {
         return category;
     }
 
+    boolean hasCategory() {
+        return categoryPresent;
+    }
+
     void setCategory(int category) {
         this.category = category;
+        this.categoryPresent = true;
     }
 }

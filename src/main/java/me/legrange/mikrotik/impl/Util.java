@@ -1,5 +1,6 @@
 package me.legrange.mikrotik.impl;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -7,6 +8,7 @@ import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
 import me.legrange.mikrotik.ApiConnectionException;
 
@@ -45,6 +47,46 @@ final class Util {
             encode(query, out);
         }
         out.write(0);
+    }
+
+    /**
+     * Read one RouterOS API word without converting its payload to text.
+     */
+    static byte[] readWord(InputStream in) throws ApiDataException, ApiConnectionException {
+        try {
+            int len = readLen(in);
+            if (len < 0) {
+                throw new ApiDataException("Invalid negative RouterOS word length");
+            }
+            byte[] data = new byte[len];
+            int offset = 0;
+            while (offset < len) {
+                int count = in.read(data, offset, len - offset);
+                if (count < 0) {
+                    throw new ApiDataException("Truncated data. Expected to read more bytes");
+                }
+                offset += count;
+            }
+            return data;
+        } catch (ApiDataException ex) {
+            throw ex;
+        } catch (IOException ex) {
+            throw new ApiConnectionException(ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * Read one complete RouterOS API sentence as raw words.
+     */
+    static List<byte[]> readSentence(InputStream in) throws ApiDataException, ApiConnectionException {
+        List<byte[]> words = new ArrayList<>();
+        while (true) {
+            byte[] word = readWord(in);
+            if (word.length == 0) {
+                return words;
+            }
+            words.add(word);
+        }
     }
 
     /**
@@ -167,29 +209,35 @@ final class Util {
      * read length bytes from stream and return length of coming word
      */
     private static int readLen(InputStream in) throws IOException {
-        int c = in.read();
-        if (c > 0) {
-            if ((c & 0x80) == 0) {
-            } else if ((c & 0xC0) == 0x80) {
-                c = c & ~0xC0;
-                c = (c << 8) | in.read();
-            } else if ((c & 0xE0) == 0xC0) {
-                c = c & ~0xE0;
-                c = (c << 8) | in.read();
-                c = (c << 8) | in.read();
-            } else if ((c & 0xF0) == 0xE0) {
-                c = c & ~0xF0;
-                c = (c << 8) | in.read();
-                c = (c << 8) | in.read();
-                c = (c << 8) | in.read();
-            } else if ((c & 0xF8) == 0xF0) {
-                c = in.read();
-                c = (c << 8) | in.read();
-                c = (c << 8) | in.read();
-                c = (c << 8) | in.read();
-                c = (c << 8) | in.read();
-            }
+        int c = readLengthByte(in);
+        if ((c & 0x80) == 0) {
+            return c;
+        } else if ((c & 0xC0) == 0x80) {
+            c = c & ~0xC0;
+            return (c << 8) | readLengthByte(in);
+        } else if ((c & 0xE0) == 0xC0) {
+            c = c & ~0xE0;
+            c = (c << 8) | readLengthByte(in);
+            return (c << 8) | readLengthByte(in);
+        } else if ((c & 0xF0) == 0xE0) {
+            c = c & ~0xF0;
+            c = (c << 8) | readLengthByte(in);
+            c = (c << 8) | readLengthByte(in);
+            return (c << 8) | readLengthByte(in);
+        } else if ((c & 0xF8) == 0xF0) {
+            c = readLengthByte(in);
+            c = (c << 8) | readLengthByte(in);
+            c = (c << 8) | readLengthByte(in);
+            return (c << 8) | readLengthByte(in);
         }
-        return c;
+        throw new IOException(String.format("Invalid RouterOS length prefix 0x%02x", c));
+    }
+
+    private static int readLengthByte(InputStream in) throws IOException {
+        int value = in.read();
+        if (value < 0) {
+            throw new EOFException("Unexpected end of stream while reading RouterOS word length");
+        }
+        return value;
     }
 }

@@ -1,5 +1,7 @@
 package me.legrange.mikrotik;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import javax.net.SocketFactory;
@@ -8,6 +10,17 @@ import me.legrange.mikrotik.impl.ApiConnectionImpl;
 /**
  * The Mikrotik API connection. This is the class used to connect to a remote
  * Mikrotik and send commands to it.
+ *
+ * <p>The built-in implementation supports multiple simultaneous tagged
+ * synchronous, asynchronous, and binary file-read operations on one
+ * connection. Complete RouterOS command sentences are serialized internally,
+ * while replies remain independently routed by tag. Callers do not need an
+ * additional send lock or dispatcher around one {@code ApiConnection}.</p>
+ *
+ * <p>Public failure types distinguish transport/session failures
+ * ({@link ApiConnectionException}), RouterOS command failures
+ * ({@link ApiCommandException}), and malformed/inconsistent API data
+ * ({@link ApiDataException}).</p>
  *
  * @author GideonLeGrange
  */
@@ -30,10 +43,9 @@ public abstract class ApiConnection implements AutoCloseable {
      */
     public static final int DEFAULT_COMMAND_TIMEOUT = 60000;
 
-    
     /**
-     * Create a new API connection to the give device on the supplied port using 
-     * the supplied socket factory to create the socket. 
+     * Create a new API connection to the give device on the supplied port using
+     * the supplied socket factory to create the socket.
      *
      * @param fact SocketFactory to use for TCP socket creation.
      * @param host The host to which to connect.
@@ -90,10 +102,52 @@ public abstract class ApiConnection implements AutoCloseable {
      *
      * @param cmd Command to execute
      * @param lis ResultListener that will receive the results
-     * @return A command object that can be used to cancel the command.
+     * @return The RouterOS command tag that can be passed to {@link #cancel(String)}.
      * @throws me.legrange.mikrotik.MikrotikApiException Thrown if the API encounters an error executing a command.
      */
     public abstract String execute(String cmd, ResultListener lis) throws MikrotikApiException;
+
+    /**
+     * Register a listener for unexpected fatal loss of an established
+     * connection. The built-in implementation deduplicates registrations by
+     * listener identity. If the connection has already entered its fatal failed
+     * state, the built-in implementation notifies a newly registered listener
+     * immediately with the retained failure. Intentional {@link #close()} does
+     * not trigger the listener.
+     *
+     * <p>This default implementation is a compatibility no-op for third-party
+     * {@code ApiConnection} subclasses compiled before this API existed.</p>
+     *
+     * @param listener listener to register
+     */
+    public void addConnectionListener(ConnectionListener listener) {
+    }
+
+    /**
+     * Remove a previously registered connection-loss listener. Removal is
+     * idempotent in the built-in implementation.
+     *
+     * <p>This default implementation is a compatibility no-op for third-party
+     * {@code ApiConnection} subclasses compiled before this API existed.</p>
+     *
+     * @param listener listener to remove
+     */
+    public void removeConnectionListener(ConnectionListener listener) {
+    }
+
+    /**
+     * Download a RouterOS file through the existing API connection without
+     * converting its payload to text.
+     *
+     * @param remoteFile RouterOS file name/path.
+     * @param localFile Local target path.
+     * @return number of bytes written after a complete successful download.
+     * @throws MikrotikApiException if RouterOS or the API reports an error.
+     * @throws IOException if the local file cannot be safely written.
+     * @since 3.0.8-praktimarc.2
+     */
+    public abstract long downloadFile(String remoteFile, Path localFile)
+            throws MikrotikApiException, IOException;
 
     /**
      * cancel a command
@@ -119,7 +173,12 @@ public abstract class ApiConnection implements AutoCloseable {
     public abstract void setTimeout(int timeout) throws MikrotikApiException;
 
     /**
-     * Disconnect from the remote API
+     * Disconnect from the remote API. The built-in implementation is
+     * idempotent: calling {@code close()} again after an intentional close or a
+     * fatal connection loss is a no-op.
+     *
+     * <p>Active commands are terminated with {@link ApiConnectionException}.
+     * Intentional close is not reported through {@link ConnectionListener}.</p>
      *
      * @throws me.legrange.mikrotik.ApiConnectionException Thrown if there is a
      * problem closing the connection.
@@ -127,5 +186,4 @@ public abstract class ApiConnection implements AutoCloseable {
      */
     @Override
     public abstract void close() throws ApiConnectionException;
-
 }
