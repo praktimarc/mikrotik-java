@@ -9,7 +9,7 @@
   <modelVersion>4.0.0</modelVersion>  
   <groupId>io.github.praktimarc</groupId>  
   <artifactId>mikrotik</artifactId>  
-  <version>3.0.8-praktimarc.2</version>  
+  <version>3.0.8-praktimarc.3</version>  
   <packaging>jar</packaging>  
   <name>Mikrotik API Java Client Library</name>  
   <url>https://github.com/praktimarc/mikrotik-java</url>  
@@ -22,7 +22,7 @@
   </licenses>  
   <scm> 
     <url>https://github.com/praktimarc/mikrotik-java</url>  
-    <connection>scm:git:https://github.com/praktimarc/mikrotik-java.git</connection>  
+    <connection>scm:git:https://github.com/praktimarc/mikrotik-java.git</connection> 
     <developerConnection>scm:git:git@github.com:praktimarc/mikrotik-java.git</developerConnection> 
   </scm>  
   <build> 
@@ -32,7 +32,7 @@
         <artifactId>maven-compiler-plugin</artifactId>  
         <version>3.13.0</version>  
         <configuration> 
-          <showDeprecation>true</showDeprecation>  
+          <showDeprecation>true</showDeprecation> 
           <release>11</release> 
         </configuration> 
       </plugin>  
@@ -43,13 +43,13 @@
         <executions> 
           <execution> 
             <id>default-jar</id>  
-            <phase>package</phase>  
+            <phase>package</phase> 
             <goals> 
-              <goal>jar</goal>  
+              <goal>jar</goal> 
             </goals> 
             <configuration> 
               <excludes> 
-                <exclude>**/examples</exclude>  
+                <exclude>**/examples</exclude> 
                 <exclude>**/examples/*</exclude> 
               </excludes> 
             </configuration> 
@@ -64,7 +64,7 @@
           <execution> 
             <id>attach-sources</id>  
             <goals> 
-              <goal>jar</goal>  
+              <goal>jar</goal> 
             </goals> 
           </execution> 
         </executions> 
@@ -80,7 +80,7 @@
           <execution> 
             <id>attach-javadocs</id>  
             <goals> 
-              <goal>jar</goal>  
+              <goal>jar</goal> 
             </goals> 
           </execution> 
         </executions> 
@@ -100,7 +100,7 @@
               <execution> 
                 <id>attach-sources</id>  
                 <goals> 
-                  <goal>jar</goal>  
+                  <goal>jar</goal> 
                 </goals> 
               </execution> 
             </executions> 
@@ -113,7 +113,7 @@
               <execution> 
                 <id>attach-javadocs</id>  
                 <goals> 
-                  <goal>jar</goal>  
+                  <goal>jar</goal> 
                 </goals> 
               </execution> 
             </executions> 
@@ -127,7 +127,7 @@
                 <id>sign-artifacts</id>  
                 <phase>verify</phase>  
                 <goals> 
-                  <goal>sign</goal>  
+                  <goal>sign</goal> 
                 </goals> 
               </execution> 
             </executions> 
@@ -142,7 +142,7 @@
               <nexusUrl>https://oss.sonatype.org/</nexusUrl>  
               <autoReleaseAfterClose>true</autoReleaseAfterClose> 
             </configuration> 
-          </plugin> 
+          </plugin>  
         </plugins> 
       </build>  
       <distributionManagement> 
@@ -155,13 +155,13 @@
   </profiles>  
   <properties> 
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding> 
-  </properties>  
+  </properties> 
   <dependencies> 
     <dependency> 
       <groupId>junit</groupId>  
       <artifactId>junit</artifactId>  
       <version>4.13.1</version>  
       <scope>test</scope> 
-    </dependency>  
+    </dependency> 
   </dependencies> 
 </project>
