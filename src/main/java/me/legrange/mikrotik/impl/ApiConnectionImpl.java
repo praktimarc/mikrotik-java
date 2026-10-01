@@ -139,8 +139,12 @@ public final class ApiConnectionImpl extends ApiConnection {
 
     private List<Map<String, String>> execute(Command cmd, int timeout) throws MikrotikApiException {
         SyncListener l = new SyncListener();
-        execute(cmd, l);
-        return l.getResults(timeout);
+        String tag = execute(cmd, l);
+        try {
+            return l.getResults(timeout);
+        } finally {
+            removeTextListener(tag, l);
+        }
     }
 
     private String execute(Command cmd, ResultListener lis) throws MikrotikApiException {
@@ -150,8 +154,10 @@ public final class ApiConnectionImpl extends ApiConnection {
         try {
             Util.write(cmd, out);
         } catch (UnsupportedEncodingException ex) {
+            removeTextListener(tag, lis);
             throw new ApiDataException(ex.getMessage(), ex);
         } catch (IOException ex) {
+            removeTextListener(tag, lis);
             throw new ApiConnectionException(ex.getMessage(), ex);
         }
         return tag;
@@ -165,17 +171,25 @@ public final class ApiConnectionImpl extends ApiConnection {
         try {
             Util.write(cmd, out);
         } catch (UnsupportedEncodingException ex) {
-            binaryListeners.remove(tag);
+            removeBinaryListener(tag, l);
             throw new ApiDataException(ex.getMessage(), ex);
         } catch (IOException ex) {
-            binaryListeners.remove(tag);
+            removeBinaryListener(tag, l);
             throw new ApiConnectionException(ex.getMessage(), ex);
         }
         try {
             return l.getResult(timeout);
         } finally {
-            binaryListeners.remove(tag);
+            removeBinaryListener(tag, l);
         }
+    }
+
+    private boolean removeTextListener(String tag, ResultListener listener) {
+        return listeners.remove(tag, listener);
+    }
+
+    private boolean removeBinaryListener(String tag, BinaryResultListener listener) {
+        return binaryListeners.remove(tag, listener);
     }
 
     private long getRemoteFileSize(String remoteFile) throws MikrotikApiException {
@@ -345,22 +359,29 @@ public final class ApiConnectionImpl extends ApiConnection {
                         l.receive(sentence.requireSingleRawAttribute("data"));
                         break;
                     case "!done":
-                        l.completed();
-                        binaryListeners.remove(tag);
+                        if (removeBinaryListener(tag, l)) {
+                            l.completed();
+                        }
                         break;
                     case "!trap":
                     case "!halt":
-                        l.error(new ApiCommandException((Error) sentence.toTextResponse()));
-                        binaryListeners.remove(tag);
+                        ApiCommandException commandError = new ApiCommandException((Error) sentence.toTextResponse());
+                        if (removeBinaryListener(tag, l)) {
+                            l.error(commandError);
+                        }
                         break;
                     default:
-                        l.error(new ApiDataException("Unexpected binary response type '" + sentence.getType() + "'"));
-                        binaryListeners.remove(tag);
+                        ApiDataException dataError = new ApiDataException(
+                                "Unexpected binary response type '" + sentence.getType() + "'");
+                        if (removeBinaryListener(tag, l)) {
+                            l.error(dataError);
+                        }
                         break;
                 }
             } catch (MikrotikApiException ex) {
-                l.error(ex);
-                binaryListeners.remove(tag);
+                if (removeBinaryListener(tag, l)) {
+                    l.error(ex);
+                }
             }
         }
 
@@ -371,14 +392,18 @@ public final class ApiConnectionImpl extends ApiConnection {
                     if (res instanceof Result) {
                         l.receive((Result) res);
                     } else if (res instanceof Done) {
-                        if (l instanceof SyncListener) {
-                            ((SyncListener) l).completed((Done) res);
-                        } else {
-                            l.completed();
+                        if (removeTextListener(res.getTag(), l)) {
+                            if (l instanceof SyncListener) {
+                                ((SyncListener) l).completed((Done) res);
+                            } else {
+                                l.completed();
+                            }
                         }
-                        listeners.remove(res.getTag());
                     } else if (res instanceof Error) {
-                        l.error(new ApiCommandException((Error) res));
+                        ApiCommandException commandError = new ApiCommandException((Error) res);
+                        if (removeTextListener(res.getTag(), l)) {
+                            l.error(commandError);
+                        }
                     }
                 }
             } else {
