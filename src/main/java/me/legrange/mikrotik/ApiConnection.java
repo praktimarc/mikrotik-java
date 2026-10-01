@@ -32,10 +32,9 @@ public abstract class ApiConnection implements AutoCloseable {
      */
     public static final int DEFAULT_COMMAND_TIMEOUT = 60000;
 
-    
     /**
-     * Create a new API connection to the give device on the supplied port using 
-     * the supplied socket factory to create the socket. 
+     * Create a new API connection to the give device on the supplied port using
+     * the supplied socket factory to create the socket.
      *
      * @param fact SocketFactory to use for TCP socket creation.
      * @param host The host to which to connect.
@@ -98,6 +97,27 @@ public abstract class ApiConnection implements AutoCloseable {
     public abstract String execute(String cmd, ResultListener lis) throws MikrotikApiException;
 
     /**
+     * Register a listener for unexpected fatal loss of an established
+     * connection. The built-in implementation deduplicates registrations by
+     * listener identity. This default implementation is a compatibility no-op
+     * for third-party ApiConnection subclasses compiled before this API existed.
+     *
+     * @param listener listener to register
+     */
+    public void addConnectionListener(ConnectionListener listener) {
+    }
+
+    /**
+     * Remove a previously registered connection-loss listener. This default
+     * implementation is a compatibility no-op for third-party ApiConnection
+     * subclasses compiled before this API existed.
+     *
+     * @param listener listener to remove
+     */
+    public void removeConnectionListener(ConnectionListener listener) {
+    }
+
+    /**
      * Download a RouterOS file through the existing API connection without
      * converting its payload to text.
      *
@@ -143,5 +163,4 @@ public abstract class ApiConnection implements AutoCloseable {
      */
     @Override
     public abstract void close() throws ApiConnectionException;
-
 }
