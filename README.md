@@ -9,23 +9,25 @@ This fork keeps the existing Java API and package names compatible with upstream
 ![Java CI with Maven](https://github.com/praktimarc/mikrotik-java/actions/workflows/maven.yml/badge.svg)
 
 - Upstream base version: `3.0.8`
-- Current fork version: `3.0.8-praktimarc.2`
-- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.2`
+- Current fork version: `3.0.8-praktimarc.3`
+- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.3`
 - Java packages remain unchanged: `me.legrange.mikrotik.*`
 - Java baseline: Java 11; builds require JDK 11 or newer
 - License: Apache License 2.0; original attribution is retained
+- Detailed release notes: [v3.0.8-praktimarc.3](docs/releases/v3.0.8-praktimarc.3.md)
 
-Fork releases use the upstream version plus a Praktimarc suffix:
+Fork versions use the upstream version plus a Praktimarc suffix:
 
 ```text
 3.0.8-praktimarc.1
 3.0.8-praktimarc.2
+3.0.8-praktimarc.3
 ...
 ```
 
 When the fork moves to a later upstream base, the fork counter restarts, for example `3.0.9-praktimarc.1`.
 
-The first fork release includes a fix for synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception. The second fork release adds binary-safe RouterOS file downloads over the existing native API connection.
+`3.0.8-praktimarc.1` was the first published fork release and fixed synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception. `3.0.8-praktimarc.2` existed only as an intermediate source version and was never tagged or published; it introduced the binary-safe RouterOS file-download work. `3.0.8-praktimarc.3` is the first published release after `.1` and includes both that unpublished `.2` work and the transport, lifecycle, protocol, concurrency, and public-exception hardening documented below.
 
 ## Getting the Praktimarc fork
 
@@ -51,7 +53,7 @@ Projects on the same machine can then use:
 <dependency>
   <groupId>io.github.praktimarc</groupId>
   <artifactId>mikrotik</artifactId>
-  <version>3.0.8-praktimarc.2</version>
+  <version>3.0.8-praktimarc.3</version>
 </dependency>
 ```
 
@@ -59,10 +61,10 @@ Alternatively, after downloading the binary JAR from GitHub Releases, install it
 
 ```bash
 mvn install:install-file \
-  -Dfile=mikrotik-3.0.8-praktimarc.2.jar \
+  -Dfile=mikrotik-3.0.8-praktimarc.3.jar \
   -DgroupId=io.github.praktimarc \
   -DartifactId=mikrotik \
-  -Dversion=3.0.8-praktimarc.2 \
+  -Dversion=3.0.8-praktimarc.3 \
   -Dpackaging=jar
 ```
 
@@ -70,7 +72,7 @@ No Java import changes are required when switching from upstream. Existing impor
 
 ## Binary-safe file downloads
 
-`3.0.8-praktimarc.2` adds `ApiConnection.downloadFile()` for downloading arbitrary RouterOS files without converting the file payload to text. The initial implementation requires RouterOS 7.13 or newer and uses `/file/read` with chunks of at most 32768 bytes over the already authenticated native API connection.
+The unpublished `3.0.8-praktimarc.2` source line introduced `ApiConnection.downloadFile()` for downloading arbitrary RouterOS files without converting the file payload to text. This capability is first published in `3.0.8-praktimarc.3`. The implementation requires RouterOS 7.13 or newer and uses `/file/read` with chunks of at most 32768 bytes over the already authenticated native API connection.
 
 ```java
 long bytes = con.downloadFile(
@@ -88,7 +90,7 @@ The existing `execute()` methods remain text-oriented and keep their existing `M
 
 ## Connection concurrency and failure handling
 
-The current source tree hardens one `ApiConnection` for concurrent use without introducing a second public dispatcher or command-handle API. The published release version remains `3.0.8-praktimarc.2` until a separate release step is performed.
+`3.0.8-praktimarc.3` hardens one `ApiConnection` for concurrent use without introducing a second public dispatcher or command-handle API.
 
 Multiple synchronous, asynchronous, and binary file-read operations may be active on one connection at the same time. Complete RouterOS command sentences are serialized internally on the shared output stream, so words from two commands cannot interleave. The lock covers only the command write and fatal send transition; it is not held while waiting for RouterOS replies.
 
@@ -275,7 +277,7 @@ con.execute("/interface/gre/set .id=gre1 remote-address=10.0.1.1");
 
 ### Remove an existing object
 
-And now remove the object:
+And now remove it:
 
 ```java
 con.execute("/interface/gre/remove .id=gre1"); 
