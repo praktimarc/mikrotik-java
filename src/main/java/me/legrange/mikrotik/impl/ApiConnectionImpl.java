@@ -152,7 +152,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
-    public void setTimeout(int timeout) throws MikrotiikApiException {
+    public void setTimeout(int timeout) throws MikrotikApiException {
         if (timeout > 0) {
             this.timeout = timeout;
         } else {
@@ -259,7 +259,7 @@ public final class ApiConnectionImpl extends ApiConnection {
         return binaryListeners.remove(tag, listener);
     }
 
-    private long getRemoteFileSize(String remoteFile) throws MikrotiikApiException {
+    private long getRemoteFileSize(String remoteFile) throws MikrotikApiException {
         Command cmd = new Command("/file/print");
         cmd.addProperty("size");
         cmd.addQuery("?name=" + remoteFile);
@@ -283,7 +283,7 @@ public final class ApiConnectionImpl extends ApiConnection {
         }
     }
 
-    private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotiikApiException {
+    private byte[] readFileChunk(String remoteFile, long offset, int chunkSize) throws MikrotikApiException {
         if (offset < 0) {
             throw new ApiDataException("File offset must not be negative");
         }
