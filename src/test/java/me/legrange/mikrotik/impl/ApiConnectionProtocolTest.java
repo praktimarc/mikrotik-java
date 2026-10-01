@@ -69,6 +69,88 @@ public class ApiConnectionProtocolTest {
     }
 
     @Test
+    public void completionAwareListenerReceivesAllDoneProperties() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
+                s.reply("!done", command.tag, "=ret=*A", "=foo=bar", "=empty="))) {
+            ApiConnection connection = connect(server);
+            try {
+                AtomicReference<Map<String, String>> completion = new AtomicReference<>();
+                AtomicInteger legacyCompletions = new AtomicInteger();
+                CountDownLatch completed = new CountDownLatch(1);
+                connection.execute("/done/metadata", new NoopResultListener() {
+                    @Override
+                    public void completed() {
+                        legacyCompletions.incrementAndGet();
+                        completed.countDown();
+                    }
+
+                    public void completed(Map<String, String> metadata) {
+                        completion.set(metadata);
+                        completed.countDown();
+                    }
+                });
+
+                assertTrue(completed.await(750, TimeUnit.MILLISECONDS));
+                assertNotNull("Completion-aware callback was not used", completion.get());
+                assertEquals(0, legacyCompletions.get());
+                assertEquals(3, completion.get().size());
+                assertEquals("*A", completion.get().get("ret"));
+                assertEquals("bar", completion.get().get("foo"));
+                assertEquals("", completion.get().get("empty"));
+                assertFalse(completion.get().containsKey(".tag"));
+            } finally {
+                connection.close();
+            }
+        }
+    }
+
+    @Test
+    public void completionAwareListenerReceivesEmptyMapForPlainDone() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
+                s.reply("!done", command.tag))) {
+            ApiConnection connection = connect(server);
+            try {
+                AtomicReference<Map<String, String>> completion = new AtomicReference<>();
+                CountDownLatch completed = new CountDownLatch(1);
+                connection.execute("/done/empty", new NoopResultListener() {
+                    @Override
+                    public void completed() {
+                        completed.countDown();
+                    }
+
+                    public void completed(Map<String, String> metadata) {
+                        completion.set(metadata);
+                        completed.countDown();
+                    }
+                });
+
+                assertTrue(completed.await(750, TimeUnit.MILLISECONDS));
+                assertNotNull("Completion-aware callback was not used", completion.get());
+                assertTrue(completion.get().isEmpty());
+            } finally {
+                connection.close();
+            }
+        }
+    }
+
+    @Test
+    public void synchronousExecuteKeepsLegacyRetOnlyCompletionResult() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
+                s.reply("!done", command.tag, "=ret=*A", "=foo=bar"))) {
+            ApiConnection connection = connect(server);
+            try {
+                List<Map<String, String>> results = connection.execute("/done/sync-ret");
+
+                assertEquals(1, results.size());
+                assertEquals("*A", results.get(0).get("ret"));
+                assertFalse(results.get(0).containsKey("foo"));
+            } finally {
+                connection.close();
+            }
+        }
+    }
+
+    @Test
     public void legacyHaltRemainsACommandError() throws Exception {
         try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
                 s.reply("!halt", command.tag, "=message=halted", "=category=2"))) {
