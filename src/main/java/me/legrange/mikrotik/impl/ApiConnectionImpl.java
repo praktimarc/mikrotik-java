@@ -228,18 +228,36 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     private void writeCommand(Command cmd) throws MikrotikApiException {
+        ApiConnectionException sendFailure = null;
+        FatalTransition transition = null;
         synchronized (writeLock) {
             synchronized (lifecycleLock) {
                 requireConnectedLocked();
             }
             try {
                 Util.write(cmd, out);
+                return;
             } catch (UnsupportedEncodingException ex) {
+                rollbackCommandRegistration(cmd.getTag());
                 throw new ApiDataException(ex.getMessage(), ex);
             } catch (IOException ex) {
-                throw new ApiConnectionException(ex.getMessage(), ex);
+                rollbackCommandRegistration(cmd.getTag());
+                sendFailure = new ApiConnectionException(ex.getMessage(), ex);
+                transition = beginFatalFailure(sendFailure);
             }
         }
+        if (transition != null) {
+            completeFatalFailure(transition);
+        }
+        throw sendFailure;
+    }
+
+    private void rollbackCommandRegistration(String tag) {
+        if (tag == null) {
+            return;
+        }
+        listeners.remove(tag);
+        binaryListeners.remove(tag);
     }
 
     private void registerTextListener(String tag, ResultListener listener) throws ApiConnectionException {
@@ -356,25 +374,34 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     private void failConnection(ApiConnectionException failure) {
-        TerminalSnapshot snapshot;
-        List<ConnectionListener> lifecycleListeners;
+        FatalTransition transition = beginFatalFailure(failure);
+        if (transition != null) {
+            completeFatalFailure(transition);
+        }
+    }
+
+    private FatalTransition beginFatalFailure(ApiConnectionException failure) {
         synchronized (lifecycleLock) {
             if (state != ConnectionState.CONNECTED) {
-                return;
+                return null;
             }
             state = ConnectionState.FAILED;
             fatalFailure = failure;
-            snapshot = drainCommandsLocked();
-            lifecycleListeners = new ArrayList<>(connectionListeners);
+            return new FatalTransition(
+                    failure,
+                    drainCommandsLocked(),
+                    new ArrayList<>(connectionListeners));
         }
+    }
 
+    private void completeFatalFailure(FatalTransition transition) {
         ApiConnectionException shutdownFailure = shutdownTransport();
         if (shutdownFailure != null) {
-            failure.addSuppressed(shutdownFailure);
+            transition.failure.addSuppressed(shutdownFailure);
         }
-        notifyCommandFailures(snapshot, failure);
-        for (ConnectionListener listener : lifecycleListeners) {
-            notifyConnectionListener(listener, failure);
+        notifyCommandFailures(transition.commands, transition.failure);
+        for (ConnectionListener listener : transition.connectionListeners) {
+            notifyConnectionListener(listener, transition.failure);
         }
     }
 
@@ -487,6 +514,19 @@ public final class ApiConnectionImpl extends ApiConnection {
         private TerminalSnapshot(List<ResultListener> textListeners, List<BinaryResultListener> binaryListeners) {
             this.textListeners = textListeners;
             this.binaryListeners = binaryListeners;
+        }
+    }
+
+    private static final class FatalTransition {
+        private final ApiConnectionException failure;
+        private final TerminalSnapshot commands;
+        private final List<ConnectionListener> connectionListeners;
+
+        private FatalTransition(ApiConnectionException failure, TerminalSnapshot commands,
+                List<ConnectionListener> connectionListeners) {
+            this.failure = failure;
+            this.commands = commands;
+            this.connectionListeners = connectionListeners;
         }
     }
 
