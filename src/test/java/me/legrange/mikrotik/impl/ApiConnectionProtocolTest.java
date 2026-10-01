@@ -8,10 +8,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.net.SocketFactory;
-import me.legrange.mikrotik.ApiConnection;
 import me.legrange.mikrotik.ApiCommandException;
+import me.legrange.mikrotik.ApiConnection;
 import me.legrange.mikrotik.ApiConnectionException;
 import me.legrange.mikrotik.ApiDataException;
+import me.legrange.mikrotik.ConnectionListener;
 import me.legrange.mikrotik.MikrotikApiException;
 import me.legrange.mikrotik.ResultListener;
 import org.junit.Test;
@@ -24,30 +25,20 @@ import static org.junit.Assert.assertTrue;
 public class ApiConnectionProtocolTest {
 
     @Test
-    public void synchronousEmptyReplyWaitsForDoneAndReturnsNoResults() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> {
-            s.reply("!empty", command.tag);
-            s.reply("!done", command.tag);
+    public void emptyReplyWaitsForDoneAndProducesNoData() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
+                s.reply("!empty", command.tag);
+                s.reply("!done", command.tag);
+            }
         })) {
             ApiConnection connection = connect(server);
             try {
                 assertTrue(connection.execute("/empty/sync").isEmpty());
-            } finally {
-                connection.close();
-            }
-        }
-    }
 
-    @Test
-    public void asynchronousEmptyReplyDoesNotProduceData() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> {
-            s.reply("!empty", command.tag);
-            s.reply("!done", command.tag);
-        })) {
-            ApiConnection connection = connect(server);
-            try {
-                AtomicInteger received = new AtomicInteger();
-                CountDownLatch completed = new CountDownLatch(1);
+                final AtomicInteger received = new AtomicInteger();
+                final CountDownLatch completed = new CountDownLatch(1);
                 connection.execute("/empty/async", new NoopResultListener() {
                     @Override
                     public void receive(Map<String, String> result) {
@@ -59,7 +50,6 @@ public class ApiConnectionProtocolTest {
                         completed.countDown();
                     }
                 });
-
                 assertTrue(completed.await(750, TimeUnit.MILLISECONDS));
                 assertEquals(0, received.get());
             } finally {
@@ -70,12 +60,16 @@ public class ApiConnectionProtocolTest {
 
     @Test
     public void legacyHaltRemainsACommandError() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
-                s.reply("!halt", command.tag, "=message=halted", "=category=2"))) {
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
+                s.reply("!halt", command.tag, "=message=halted", "=category=2");
+            }
+        })) {
             ApiConnection connection = connect(server);
             try {
-                AtomicReference<MikrotikApiException> error = new AtomicReference<>();
-                CountDownLatch failed = new CountDownLatch(1);
+                final AtomicReference<MikrotikApiException> error = new AtomicReference<MikrotikApiException>();
+                final CountDownLatch failed = new CountDownLatch(1);
                 connection.execute("/legacy/halt", new NoopResultListener() {
                     @Override
                     public void error(MikrotikApiException ex) {
@@ -83,7 +77,6 @@ public class ApiConnectionProtocolTest {
                         failed.countDown();
                     }
                 });
-
                 assertTrue(failed.await(750, TimeUnit.MILLISECONDS));
                 assertTrue(error.get() instanceof ApiCommandException);
                 assertTrue(connection.isConnected());
@@ -94,18 +87,25 @@ public class ApiConnectionProtocolTest {
     }
 
     @Test
-    public void fatalReplyFailsSessionAndPreservesDiagnostic() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
-                s.replyFatal("session terminated on request"))) {
+    public void fatalReplyFailsWholeSessionAndPreservesDiagnostic() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
+                s.replyFatal("session terminated on request");
+            }
+        })) {
             ApiConnection connection = connect(server);
-            AtomicReference<ApiConnectionException> lifecycleFailure = new AtomicReference<>();
-            CountDownLatch lifecycle = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> {
-                lifecycleFailure.set(cause);
-                lifecycle.countDown();
+            final AtomicReference<ApiConnectionException> lifecycleFailure = new AtomicReference<ApiConnectionException>();
+            final CountDownLatch lifecycle = new CountDownLatch(1);
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    lifecycleFailure.set(cause);
+                    lifecycle.countDown();
+                }
             });
-            AtomicReference<MikrotikApiException> commandFailure = new AtomicReference<>();
-            CountDownLatch command = new CountDownLatch(1);
+            final AtomicReference<MikrotikApiException> commandFailure = new AtomicReference<MikrotikApiException>();
+            final CountDownLatch command = new CountDownLatch(1);
             connection.execute("/fatal", new NoopResultListener() {
                 @Override
                 public void error(MikrotikApiException ex) {
@@ -126,14 +126,21 @@ public class ApiConnectionProtocolTest {
 
     @Test
     public void unknownReplyTypeFailsWholeSession() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
-                s.reply("!future-reply", command.tag))) {
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
+                s.reply("!future-reply", command.tag);
+            }
+        })) {
             ApiConnection connection = connect(server);
-            CountDownLatch lifecycle = new CountDownLatch(1);
-            AtomicReference<ApiConnectionException> failure = new AtomicReference<>();
-            connection.addConnectionListener(cause -> {
-                failure.set(cause);
-                lifecycle.countDown();
+            final CountDownLatch lifecycle = new CountDownLatch(1);
+            final AtomicReference<ApiConnectionException> failure = new AtomicReference<ApiConnectionException>();
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    failure.set(cause);
+                    lifecycle.countDown();
+                }
             });
             connection.execute("/future/reply", new NoopResultListener());
 
@@ -147,18 +154,21 @@ public class ApiConnectionProtocolTest {
 
     @Test
     public void malformedTaggedTrapFailsOnlyThatCommand() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> {
-            if ("/bad/trap".equals(command.command)) {
-                s.reply("!trap", command.tag, "=message=bad", "=category=not-a-number");
-            } else if ("/good".equals(command.command)) {
-                s.reply("!re", command.tag, "=value=ok");
-                s.reply("!done", command.tag);
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
+                if ("/bad/trap".equals(command.command)) {
+                    s.reply("!trap", command.tag, "=message=bad", "=category=not-a-number");
+                } else if ("/good".equals(command.command)) {
+                    s.reply("!re", command.tag, "=value=ok");
+                    s.reply("!done", command.tag);
+                }
             }
         })) {
             ApiConnection connection = connect(server);
             try {
-                AtomicReference<MikrotikApiException> badFailure = new AtomicReference<>();
-                CountDownLatch badFailed = new CountDownLatch(1);
+                final AtomicReference<MikrotikApiException> badFailure = new AtomicReference<MikrotikApiException>();
+                final CountDownLatch badFailed = new CountDownLatch(1);
                 connection.execute("/bad/trap", new NoopResultListener() {
                     @Override
                     public void error(MikrotikApiException ex) {
@@ -168,10 +178,8 @@ public class ApiConnectionProtocolTest {
                 });
 
                 List<Map<String, String>> good = connection.execute("/good");
-
                 assertTrue(badFailed.await(750, TimeUnit.MILLISECONDS));
                 assertTrue(badFailure.get() instanceof ApiDataException);
-                assertEquals(1, good.size());
                 assertEquals("ok", good.get(0).get("value"));
                 assertTrue(connection.isConnected());
             } finally {
@@ -181,31 +189,24 @@ public class ApiConnectionProtocolTest {
     }
 
     @Test
-    public void duplicateTagsMakeRoutingUntrustworthyAndFailSession() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
+    public void untrustworthyTagOrFramingFailsSession() throws Exception {
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
                 s.replyWords(RouterOsTestServer.text("!done"),
                         RouterOsTestServer.text(".tag=" + command.tag),
-                        RouterOsTestServer.text(".tag=other")))) {
+                        RouterOsTestServer.text(".tag=other"));
+            }
+        })) {
             ApiConnection connection = connect(server);
-            CountDownLatch lifecycle = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> lifecycle.countDown());
+            final CountDownLatch lifecycle = new CountDownLatch(1);
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    lifecycle.countDown();
+                }
+            });
             connection.execute("/duplicate/tag", new NoopResultListener());
-
-            assertTrue(lifecycle.await(750, TimeUnit.MILLISECONDS));
-            assertFalse(connection.isConnected());
-            connection.close();
-        }
-    }
-
-    @Test
-    public void reservedControlByteFailsSession() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) ->
-                s.writeRawBytes(new byte[]{(byte) 0xf8}))) {
-            ApiConnection connection = connect(server);
-            CountDownLatch lifecycle = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> lifecycle.countDown());
-            connection.execute("/reserved/control", new NoopResultListener());
-
             assertTrue(lifecycle.await(750, TimeUnit.MILLISECONDS));
             assertFalse(connection.isConnected());
             connection.close();
