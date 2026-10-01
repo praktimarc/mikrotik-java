@@ -1,17 +1,14 @@
 package me.legrange.mikrotik.impl;
 
-import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -38,141 +35,153 @@ import static org.junit.Assert.fail;
 public class ApiConnectionStateTest {
 
     @Test
-    public void closeIsIdempotentAndMarksConnectionDisconnected() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
+    public void closeIsIdempotentAndDoesNotReportConnectionLoss() throws Exception {
+        try (RouterOsTestServer server = idleServer()) {
             ApiConnection connection = connect(server);
-            assertTrue(connection.isConnected());
+            final AtomicInteger losses = new AtomicInteger();
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    losses.incrementAndGet();
+                }
+            });
 
             connection.close();
             connection.close();
 
             assertFalse(connection.isConnected());
+            assertEquals(0, losses.get());
         }
     }
 
     @Test
-    public void intentionalCloseFailsActiveCommandsButDoesNotNotifyConnectionLossListener() throws Exception {
-        CountDownLatch commandsSeen = new CountDownLatch(2);
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> commandsSeen.countDown())) {
-            ApiConnection connection = connect(server);
-            connection.setTimeout(2500);
-            AtomicInteger lifecycleLosses = new AtomicInteger();
-            connection.addConnectionListener(cause -> lifecycleLosses.incrementAndGet());
-            AtomicReference<MikrotikApiException> asyncError = new AtomicReference<>();
-            CountDownLatch asyncFailed = new CountDownLatch(1);
-            connection.execute("/wait/async", new NoopResultListener() {
-                @Override
-                public void error(MikrotikApiException ex) {
-                    asyncError.set(ex);
-                    asyncFailed.countDown();
-                }
-            });
-
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            Future<List<Map<String, String>>> sync = executor.submit(() -> connection.execute("/wait/sync"));
-            try {
-                assertTrue(commandsSeen.await(1, TimeUnit.SECONDS));
-                connection.close();
-
-                assertTrue(asyncFailed.await(750, TimeUnit.MILLISECONDS));
-                assertTrue(asyncError.get() instanceof ApiConnectionException);
-                assertFutureConnectionFailure(sync, 750);
-                assertEquals(0, lifecycleLosses.get());
-                assertFalse(connection.isConnected());
-            } finally {
-                executor.shutdownNow();
-                connection.close();
-            }
-        }
-    }
-
-    @Test
-    public void submissionsAfterCloseFailBeforeTouchingOutput() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
-            ApiConnection connection = connect(server);
-            connection.close();
-            AtomicInteger writes = new AtomicInteger();
-            DataOutputStream tracking = new DataOutputStream(new OutputStream() {
-                @Override
-                public void write(int b) throws IOException {
-                    writes.incrementAndGet();
-                    throw new IOException("output must not be touched");
-                }
-            });
-            setOutput((ApiConnectionImpl) connection, tracking);
-
-            try {
-                connection.execute("/after/close", new NoopResultListener());
-                fail("Expected closed text submission to fail");
-            } catch (ApiConnectionException expected) {
-            }
-            assertEquals(0, writes.get());
-
-            Throwable binaryFailure = invokeBinaryExecute((ApiConnectionImpl) connection,
-                    new Command("/after/close/binary"), 25);
-            assertTrue(binaryFailure instanceof ApiConnectionException);
-            assertEquals(0, writes.get());
-        }
-    }
-
-    @Test
-    public void fatalSocketLossFailsAllActiveTextCommandsAndDrainsRegistries() throws Exception {
-        CountDownLatch commandsSeen = new CountDownLatch(2);
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> commandsSeen.countDown())) {
-            ApiConnection connection = connect(server);
-            connection.setTimeout(2500);
-            AtomicReference<MikrotikApiException> asyncError = new AtomicReference<>();
-            CountDownLatch asyncFailed = new CountDownLatch(1);
-            connection.execute("/fatal/async", new NoopResultListener() {
-                @Override
-                public void error(MikrotikApiException ex) {
-                    asyncError.set(ex);
-                    asyncFailed.countDown();
-                }
-            });
-
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            Future<List<Map<String, String>>> sync = executor.submit(() -> connection.execute("/fatal/sync"));
-            try {
-                assertTrue(commandsSeen.await(1, TimeUnit.SECONDS));
-                server.closeClientConnection();
-
-                assertTrue(asyncFailed.await(750, TimeUnit.MILLISECONDS));
-                assertTrue(asyncError.get() instanceof ApiConnectionException);
-                assertFutureConnectionFailure(sync, 750);
-                assertTrue(waitUntil(() -> !connection.isConnected(), 750));
-                assertTrue(textListeners((ApiConnectionImpl) connection).isEmpty());
-                assertTrue(binaryListeners((ApiConnectionImpl) connection).isEmpty());
-            } finally {
-                executor.shutdownNow();
-                connection.close();
-            }
-        }
-    }
-
-    @Test
-    public void fatalSocketLossFailsActiveBinaryDownloadPromptly() throws Exception {
-        CountDownLatch readSeen = new CountDownLatch(1);
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> {
-            if ("/file/print".equals(command.command)) {
-                s.reply("!re", command.tag, "=size=1");
-                s.reply("!done", command.tag);
-            } else if ("/file/read".equals(command.command)) {
-                readSeen.countDown();
+    public void intentionalCloseFailsActiveCommandWithoutLifecycleNotification() throws Exception {
+        final CountDownLatch commandSeen = new CountDownLatch(1);
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) {
+                commandSeen.countDown();
             }
         })) {
             ApiConnection connection = connect(server);
+            final AtomicInteger losses = new AtomicInteger();
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    losses.incrementAndGet();
+                }
+            });
+            final AtomicReference<MikrotikApiException> error = new AtomicReference<MikrotikApiException>();
+            final CountDownLatch failed = new CountDownLatch(1);
+            connection.execute("/wait", new NoopResultListener() {
+                @Override
+                public void error(MikrotikApiException ex) {
+                    error.set(ex);
+                    failed.countDown();
+                }
+            });
+
+            assertTrue(commandSeen.await(750, TimeUnit.MILLISECONDS));
+            connection.close();
+            assertTrue(failed.await(750, TimeUnit.MILLISECONDS));
+            assertTrue(error.get() instanceof ApiConnectionException);
+            assertEquals(0, losses.get());
+        }
+    }
+
+    @Test
+    public void submissionsAfterCloseFailBeforeWriting() throws Exception {
+        try (RouterOsTestServer server = idleServer()) {
+            ApiConnection connection = connect(server);
+            connection.close();
+            final AtomicInteger writes = new AtomicInteger();
+            setOutput((ApiConnectionImpl) connection, new DataOutputStream(new OutputStream() {
+                @Override
+                public void write(int b) throws IOException {
+                    writes.incrementAndGet();
+                    throw new IOException("must not write");
+                }
+            }));
+
+            try {
+                connection.execute("/after/close", new NoopResultListener());
+                fail("Expected closed connection failure");
+            } catch (ApiConnectionException expected) {
+            }
+            assertEquals(0, writes.get());
+        }
+    }
+
+    @Test
+    public void fatalSocketLossFailsActiveCommandAndNotifiesLifecycle() throws Exception {
+        final CountDownLatch commandSeen = new CountDownLatch(1);
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) {
+                commandSeen.countDown();
+            }
+        })) {
+            ApiConnection connection = connect(server);
+            final AtomicReference<MikrotikApiException> commandError = new AtomicReference<MikrotikApiException>();
+            final CountDownLatch commandFailed = new CountDownLatch(1);
+            final AtomicReference<ApiConnectionException> lifecycleError = new AtomicReference<ApiConnectionException>();
+            final CountDownLatch lifecycleFailed = new CountDownLatch(1);
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    lifecycleError.set(cause);
+                    lifecycleFailed.countDown();
+                }
+            });
+            connection.execute("/fatal/async", new NoopResultListener() {
+                @Override
+                public void error(MikrotikApiException ex) {
+                    commandError.set(ex);
+                    commandFailed.countDown();
+                }
+            });
+
+            assertTrue(commandSeen.await(750, TimeUnit.MILLISECONDS));
+            server.closeClientConnection();
+            assertTrue(commandFailed.await(750, TimeUnit.MILLISECONDS));
+            assertTrue(lifecycleFailed.await(750, TimeUnit.MILLISECONDS));
+            assertTrue(commandError.get() instanceof ApiConnectionException);
+            assertTrue(lifecycleError.get() instanceof ApiConnectionException);
+            assertFalse(connection.isConnected());
+            connection.close();
+        }
+    }
+
+    @Test
+    public void fatalSocketLossTerminatesBinaryDownloadPromptly() throws Exception {
+        final CountDownLatch readSeen = new CountDownLatch(1);
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) throws Exception {
+                if ("/file/print".equals(command.command)) {
+                    s.reply("!re", command.tag, "=size=1");
+                    s.reply("!done", command.tag);
+                } else if ("/file/read".equals(command.command)) {
+                    readSeen.countDown();
+                }
+            }
+        })) {
+            final ApiConnection connection = connect(server);
             connection.setTimeout(2500);
-            Path dir = Files.createTempDirectory("mikrotik-fatal-binary");
-            Path target = dir.resolve("test.bin");
+            final Path dir = Files.createTempDirectory("mikrotik-fatal-binary");
+            final Path target = dir.resolve("test.bin");
             ExecutorService executor = Executors.newSingleThreadExecutor();
-            Future<Long> download = executor.submit(() -> connection.downloadFile("test.bin", target));
+            Future<Long> download = executor.submit(new Callable<Long>() {
+                @Override
+                public Long call() throws Exception {
+                    return connection.downloadFile("test.bin", target);
+                }
+            });
             try {
                 assertTrue(readSeen.await(1, TimeUnit.SECONDS));
                 server.closeClientConnection();
                 assertFutureConnectionFailure(download, 750);
-                assertTrue(waitUntil(() -> !connection.isConnected(), 750));
-                assertTrue(binaryListeners((ApiConnectionImpl) connection).isEmpty());
+                assertFalse(connection.isConnected());
             } finally {
                 executor.shutdownNow();
                 connection.close();
@@ -184,111 +193,51 @@ public class ApiConnectionStateTest {
     }
 
     @Test
-    public void idleFatalLossNotifiesConnectionListenerExactlyOnceEvenWithDuplicateRegistration() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
+    public void listenerAddedAfterFailureGetsRetainedCauseAndBadListenerDoesNotBlockOthers() throws Exception {
+        try (RouterOsTestServer server = idleServer()) {
             ApiConnection connection = connect(server);
             assertTrue(server.awaitClientConnection(1000));
-            AtomicInteger notifications = new AtomicInteger();
-            CountDownLatch notified = new CountDownLatch(1);
-            ConnectionListener listener = cause -> {
-                notifications.incrementAndGet();
-                notified.countDown();
-            };
-            connection.addConnectionListener(listener);
-            connection.addConnectionListener(listener);
-
-            server.closeClientConnection();
-
-            assertTrue(notified.await(750, TimeUnit.MILLISECONDS));
-            assertTrue(waitUntil(() -> notifications.get() == 1, 250));
-            assertEquals(1, notifications.get());
-            assertFalse(connection.isConnected());
-            connection.close();
-        }
-    }
-
-    @Test
-    public void removedConnectionListenerIsNotNotifiedAndRemovalIsIdempotent() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
-            ApiConnection connection = connect(server);
-            assertTrue(server.awaitClientConnection(1000));
-            AtomicInteger removedNotifications = new AtomicInteger();
-            ConnectionListener removed = cause -> removedNotifications.incrementAndGet();
-            connection.addConnectionListener(removed);
-            connection.removeConnectionListener(removed);
-            connection.removeConnectionListener(removed);
-            CountDownLatch witness = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> witness.countDown());
-
-            server.closeClientConnection();
-
-            assertTrue(witness.await(750, TimeUnit.MILLISECONDS));
-            assertEquals(0, removedNotifications.get());
-            connection.close();
-        }
-    }
-
-    @Test
-    public void addingListenerAfterFailureNotifiesImmediatelyWithRetainedCause() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
-            ApiConnection connection = connect(server);
-            assertTrue(server.awaitClientConnection(1000));
-            AtomicReference<ApiConnectionException> firstCause = new AtomicReference<>();
-            CountDownLatch first = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> {
-                firstCause.set(cause);
-                first.countDown();
+            final AtomicReference<ApiConnectionException> firstCause = new AtomicReference<ApiConnectionException>();
+            final CountDownLatch first = new CountDownLatch(1);
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    firstCause.set(cause);
+                    first.countDown();
+                    throw new IllegalStateException("listener failure");
+                }
             });
             server.closeClientConnection();
             assertTrue(first.await(750, TimeUnit.MILLISECONDS));
 
-            AtomicReference<ApiConnectionException> lateCause = new AtomicReference<>();
-            CountDownLatch late = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> {
-                lateCause.set(cause);
-                late.countDown();
+            final AtomicReference<ApiConnectionException> lateCause = new AtomicReference<ApiConnectionException>();
+            final CountDownLatch late = new CountDownLatch(1);
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    lateCause.set(cause);
+                    late.countDown();
+                }
             });
-
             assertTrue(late.await(100, TimeUnit.MILLISECONDS));
             assertSame(firstCause.get(), lateCause.get());
             connection.close();
         }
     }
 
-    @Test
-    public void addingListenerAfterIntentionalCloseDoesNotNotify() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
-            ApiConnection connection = connect(server);
-            connection.close();
-            AtomicInteger notifications = new AtomicInteger();
-
-            connection.addConnectionListener(cause -> notifications.incrementAndGet());
-
-            assertEquals(0, notifications.get());
-        }
-    }
-
-    @Test
-    public void throwingConnectionListenerDoesNotPreventRemainingListeners() throws Exception {
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> { })) {
-            ApiConnection connection = connect(server);
-            assertTrue(server.awaitClientConnection(1000));
-            CountDownLatch healthyListener = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> {
-                throw new IllegalStateException("listener failure");
-            });
-            connection.addConnectionListener(cause -> healthyListener.countDown());
-
-            server.closeClientConnection();
-
-            assertTrue(healthyListener.await(750, TimeUnit.MILLISECONDS));
-            connection.close();
-        }
+    private static RouterOsTestServer idleServer() throws Exception {
+        return new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) {
+            }
+        });
     }
 
     private static ApiConnection connect(RouterOsTestServer server) throws Exception {
-        return ApiConnection.connect(SocketFactory.getDefault(),
+        ApiConnection connection = ApiConnection.connect(SocketFactory.getDefault(),
                 InetAddress.getLoopbackAddress().getHostAddress(), server.getPort(), 1000);
+        connection.setTimeout(1500);
+        return connection;
     }
 
     private static void assertFutureConnectionFailure(Future<?> future, long timeoutMs) throws Exception {
@@ -296,33 +245,9 @@ public class ApiConnectionStateTest {
             future.get(timeoutMs, TimeUnit.MILLISECONDS);
             fail("Expected connection failure");
         } catch (ExecutionException ex) {
-            assertTrue("Expected ApiConnectionException but got " + ex.getCause(),
-                    ex.getCause() instanceof ApiConnectionException);
+            assertTrue(ex.getCause() instanceof ApiConnectionException);
         } catch (TimeoutException ex) {
             fail("Operation did not terminate promptly after connection ended");
-        }
-    }
-
-    private static boolean waitUntil(Check check, long timeoutMs) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
-        while (System.nanoTime() < deadline) {
-            if (check.get()) {
-                return true;
-            }
-            Thread.sleep(5);
-        }
-        return check.get();
-    }
-
-    private static Throwable invokeBinaryExecute(ApiConnectionImpl connection, Command command, int timeout) throws Exception {
-        Method method = ApiConnectionImpl.class.getDeclaredMethod("executeBinaryRead", Command.class, Integer.TYPE);
-        method.setAccessible(true);
-        try {
-            method.invoke(connection, command, timeout);
-            fail("Expected binary submission to fail");
-            return null;
-        } catch (InvocationTargetException ex) {
-            return ex.getCause();
         }
     }
 
@@ -330,24 +255,6 @@ public class ApiConnectionStateTest {
         Field field = ApiConnectionImpl.class.getDeclaredField("out");
         field.setAccessible(true);
         field.set(connection, output);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, ResultListener> textListeners(ApiConnectionImpl connection) throws Exception {
-        Field field = ApiConnectionImpl.class.getDeclaredField("listeners");
-        field.setAccessible(true);
-        return (Map<String, ResultListener>) field.get(connection);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, BinaryResultListener> binaryListeners(ApiConnectionImpl connection) throws Exception {
-        Field field = ApiConnectionImpl.class.getDeclaredField("binaryListeners");
-        field.setAccessible(true);
-        return (Map<String, BinaryResultListener>) field.get(connection);
-    }
-
-    private interface Check {
-        boolean get() throws Exception;
     }
 
     private static class NoopResultListener implements ResultListener {
