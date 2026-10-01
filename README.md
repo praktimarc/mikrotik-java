@@ -9,12 +9,12 @@ This fork keeps the existing Java API and package names compatible with upstream
 ![Java CI with Maven](https://github.com/praktimarc/mikrotik-java/actions/workflows/maven.yml/badge.svg)
 
 - Upstream base version: `3.0.8`
-- Current fork version: `3.0.8-praktimarc.3`
-- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.3`
+- Current fork version: `3.0.8-praktimarc.4`
+- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.4`
 - Java packages remain unchanged: `me.legrange.mikrotik.*`
 - Java baseline: Java 11; builds require JDK 11 or newer
 - License: Apache License 2.0; original attribution is retained
-- Detailed release notes: [v3.0.8-praktimarc.3](docs/releases/v3.0.8-praktimarc.3.md)
+- Detailed release notes: [v3.0.8-praktimarc.4](docs/releases/v3.0.8-praktimarc.4.md)
 
 Fork versions use the upstream version plus a Praktimarc suffix:
 
@@ -22,12 +22,13 @@ Fork versions use the upstream version plus a Praktimarc suffix:
 3.0.8-praktimarc.1
 3.0.8-praktimarc.2
 3.0.8-praktimarc.3
+3.0.8-praktimarc.4
 ...
 ```
 
 When the fork moves to a later upstream base, the fork counter restarts, for example `3.0.9-praktimarc.1`.
 
-`3.0.8-praktimarc.1` was the first published fork release and fixed synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception. `3.0.8-praktimarc.2` existed only as an intermediate source version and was never tagged or published; it introduced the binary-safe RouterOS file-download work. `3.0.8-praktimarc.3` is the first published release after `.1` and includes both that unpublished `.2` work and the transport, lifecycle, protocol, concurrency, and public-exception hardening documented below.
+`3.0.8-praktimarc.1` was the first published fork release and fixed synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception. `3.0.8-praktimarc.2` existed only as an intermediate source version and was never tagged or published; it introduced the binary-safe RouterOS file-download work. `3.0.8-praktimarc.3` is the first published release after `.1` and includes both that unpublished `.2` work and the transport, lifecycle, protocol, concurrency, and public-exception hardening documented below. `3.0.8-praktimarc.4` is a focused follow-up that exposes terminal RouterOS `!done` properties through the public listener API while preserving the existing synchronous and legacy-listener behavior.
 
 ## Getting the Praktimarc fork
 
@@ -53,7 +54,7 @@ Projects on the same machine can then use:
 <dependency>
   <groupId>io.github.praktimarc</groupId>
   <artifactId>mikrotik</artifactId>
-  <version>3.0.8-praktimarc.3</version>
+  <version>3.0.8-praktimarc.4</version>
 </dependency>
 ```
 
@@ -61,10 +62,10 @@ Alternatively, after downloading the binary JAR from GitHub Releases, install it
 
 ```bash
 mvn install:install-file \
-  -Dfile=mikrotik-3.0.8-praktimarc.3.jar \
+  -Dfile=mikrotik-3.0.8-praktimarc.4.jar \
   -DgroupId=io.github.praktimarc \
   -DartifactId=mikrotik \
-  -Dversion=3.0.8-praktimarc.3 \
+  -Dversion=3.0.8-praktimarc.4 \
   -Dpackaging=jar
 ```
 
@@ -148,6 +149,22 @@ The dispatcher recognizes the current native API reply words used by this fork:
 - `!fatal` — fatal session error, including best-effort extraction of free-word diagnostics.
 
 Unknown reply words, duplicate/untrustworthy tag routing, reserved/unsupported control bytes, truncated framing, and other unrecoverable protocol states fail the connection instead of being silently ignored. A malformed but uniquely tagged command reply can be failed locally with `ApiDataException` when routing remains trustworthy.
+
+### Terminal completion metadata
+
+`3.0.8-praktimarc.4` makes terminal RouterOS `!done` properties available to callers using `execute(String, ResultListener)`. `ResultListener` keeps its existing `completed()` method and adds a backward-compatible default overload:
+
+```java
+default void completed(Map<String, String> completion) {
+    completed();
+}
+```
+
+Existing listener implementations therefore continue to work without changes. Listeners that need terminal metadata can override `completed(Map<String, String>)` in addition to the existing required methods.
+
+The completion map contains all normal `=name=value` properties from `!done`, including `ret` and any other RouterOS-supplied terminal values. `.tag` remains internal response-routing metadata and is not included. A plain `!done` produces an empty map, and the map delivered to the listener is unmodifiable.
+
+The synchronous `execute(String)` API intentionally keeps its established result shape: a terminal `ret` is still exposed as an additional result containing only `ret`, while other completion properties are not injected into the legacy synchronous result list. This lets higher-level APIs use the listener path for both sync and async commands without changing existing low-level synchronous callers.
 
 ## Upstream project
 
@@ -322,10 +339,12 @@ String tag = con.execute("/interface/wireless/monitor .id=wlan1 return signal-to
   );
 ```
 
-The `ResultListener` interface has three methods the user needs to implement:
-* `receive()` is called to receive results produced by the router from the API. 
+The `ResultListener` interface retains three methods that existing implementations already provide:
+* `receive()` is called to receive results produced by the router from the API.
 * `error()` is called when an exception is raised based on a RouterOS command error or another API failure.
-* `completed()` is called when the router has indicated that the command has completed or has been cancelled. 
+* `completed()` is called when the router has indicated that the command has completed or has been cancelled.
+
+Starting with `3.0.8-praktimarc.4`, listeners may additionally override the default `completed(Map<String, String> completion)` method when they need properties carried by the terminal `!done` sentence. Existing implementations that only implement `completed()` continue to work unchanged because the default metadata callback delegates to it.
 
 The above command will run and send results asynchronously as they become available, until it is canceled. The command (identified by the unique String returned) is canceled like this:
 

@@ -9,7 +9,7 @@
   <modelVersion>4.0.0</modelVersion>  
   <groupId>io.github.praktimarc</groupId>  
   <artifactId>mikrotik</artifactId>  
-  <version>3.0.8-praktimarc.3</version>  
+  <version>3.0.8-praktimarc.4</version>  
   <packaging>jar</packaging>  
   <name>Mikrotik API Java Client Library</name>  
   <url>https://github.com/praktimarc/mikrotik-java</url>  
@@ -43,18 +43,18 @@
         <executions> 
           <execution> 
             <id>default-jar</id>  
-            <phase>package</phase> 
+            <phase>package</phase>  
             <goals> 
-              <goal>jar</goal> 
-            </goals> 
+              <goal>jar</goal>  
+            </goals>  
             <configuration> 
               <excludes> 
-                <exclude>**/examples</exclude> 
-                <exclude>**/examples/*</exclude> 
-              </excludes> 
-            </configuration> 
-          </execution> 
-        </executions> 
+                <exclude>**/examples</exclude>  
+                <exclude>**/examples/*</exclude>  
+              </excludes>  
+            </configuration>  
+          </execution>  
+        </executions>  
       </plugin>  
       <plugin> 
         <groupId>org.apache.maven.plugins</groupId>  
@@ -64,104 +64,104 @@
           <execution> 
             <id>attach-sources</id>  
             <goals> 
-              <goal>jar</goal> 
-            </goals> 
-          </execution> 
-        </executions> 
+              <goal>jar</goal>  
+            </goals>  
+          </execution>  
+        </executions>  
       </plugin>  
       <plugin> 
         <groupId>org.apache.maven.plugins</groupId>  
         <artifactId>maven-javadoc-plugin</artifactId>  
         <version>2.9.1</version>  
         <configuration> 
-          <excludePackageNames>example;*.impl</excludePackageNames> 
-        </configuration> 
+          <excludePackageNames>example;*.impl</excludePackageNames>  
+        </configuration>  
         <executions> 
           <execution> 
             <id>attach-javadocs</id>  
-            <goals> 
-              <goal>jar</goal> 
-            </goals> 
-          </execution> 
-        </executions> 
+            <goals>  
+              <goal>jar</goal>  
+            </goals>  
+          </execution>  
+        </executions>  
       </plugin>  
-   </plugins> 
+   </plugins>  
   </build>  
-  <profiles> 
-    <profile> 
+  <profiles>  
+    <profile>  
       <id>release</id>  
-      <build> 
-        <plugins> 
-          <plugin> 
+      <build>  
+        <plugins>  
+          <plugin>  
             <groupId>org.apache.maven.plugins</groupId>  
             <artifactId>maven-source-plugin</artifactId>  
             <version>2.4</version>  
-            <executions> 
-              <execution> 
+            <executions>  
+              <execution>  
                 <id>attach-sources</id>  
-                <goals> 
-                  <goal>jar</goal> 
-                </goals> 
-              </execution> 
-            </executions> 
+                <goals>  
+                  <goal>jar</goal>  
+                </goals>  
+              </execution>  
+            </executions>  
           </plugin>  
-          <plugin> 
+          <plugin>  
             <groupId>org.apache.maven.plugins</groupId>  
             <artifactId>maven-javadoc-plugin</artifactId>  
             <version>2.10.1</version>  
-            <executions> 
-              <execution> 
+            <executions>  
+              <execution>  
                 <id>attach-javadocs</id>  
-                <goals> 
-                  <goal>jar</goal> 
-                </goals> 
-              </execution> 
-            </executions> 
+                <goals>  
+                  <goal>jar</goal>  
+                </goals>  
+              </execution>  
+            </executions>  
           </plugin>  
-          <plugin> 
+          <plugin>  
             <groupId>org.apache.maven.plugins</groupId>  
             <artifactId>maven-gpg-plugin</artifactId>  
             <version>1.6</version>  
-            <executions> 
-              <execution> 
+            <executions>  
+              <execution>  
                 <id>sign-artifacts</id>  
                 <phase>verify</phase>  
-                <goals> 
-                  <goal>sign</goal> 
-                </goals> 
-              </execution> 
-            </executions> 
+                <goals>  
+                  <goal>sign</goal>  
+                </goals>  
+              </execution>  
+            </executions>  
           </plugin>  
-          <plugin> 
+          <plugin>  
             <groupId>org.sonatype.plugins</groupId>  
             <artifactId>nexus-staging-maven-plugin</artifactId>  
             <version>1.6.5</version>  
             <extensions>true</extensions>  
-            <configuration> 
+            <configuration>  
               <serverId>ossrh</serverId>  
               <nexusUrl>https://oss.sonatype.org/</nexusUrl>  
-              <autoReleaseAfterClose>true</autoReleaseAfterClose> 
-            </configuration> 
+              <autoReleaseAfterClose>true</autoReleaseAfterClose>  
+            </configuration>  
           </plugin>  
-        </plugins> 
+        </plugins>  
       </build>  
-      <distributionManagement> 
-        <snapshotRepository> 
+      <distributionManagement>  
+        <snapshotRepository>  
           <id>ossrh</id>  
           <url>https://oss.sonatype.org/content/repositories/snapshots</url>  
-        </snapshotRepository> 
-      </distributionManagement> 
-    </profile> 
+        </snapshotRepository>  
+      </distributionManagement>  
+    </profile>  
   </profiles>  
-  <properties> 
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding> 
-  </properties> 
-  <dependencies> 
-    <dependency> 
+  <properties>  
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>  
+  </properties>  
+  <dependencies>  
+    <dependency>  
       <groupId>junit</groupId>  
       <artifactId>junit</artifactId>  
       <version>4.13.1</version>  
-      <scope>test</scope> 
-    </dependency> 
-  </dependencies> 
+      <scope>test</scope>  
+    </dependency>  
+  </dependencies>  
 </project>
