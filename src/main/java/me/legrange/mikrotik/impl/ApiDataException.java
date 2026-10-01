@@ -1,12 +1,11 @@
 package me.legrange.mikrotik.impl;
 
-import me.legrange.mikrotik.MikrotikApiException;
-
 /**
- * Thrown if there is a problem unpacking data from the Api. 
- * @author GideonLeGrange
+ * Compatibility subtype for API data errors exposed by older imports.
+ *
+ * @author Gideon Le Grange
  */
-public class ApiDataException extends MikrotikApiException {
+public class ApiDataException extends me.legrange.mikrotik.ApiDataException {
 
     ApiDataException(String msg) {
         super(msg);
@@ -15,7 +14,4 @@ public class ApiDataException extends MikrotikApiException {
     ApiDataException(String msg, Throwable err) {
         super(msg, err);
     }
-
-    
-    
 }
