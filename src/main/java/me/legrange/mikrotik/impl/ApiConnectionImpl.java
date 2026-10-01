@@ -123,7 +123,7 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
-    public long downloadFile(String remoteFile, Path localFile) throws MikrotikApiException, IOException {
+    public long downloadFile(final String remoteFile, Path localFile) throws MikrotikApiException, IOException {
         if (remoteFile == null) {
             throw new NullPointerException("remoteFile");
         }
