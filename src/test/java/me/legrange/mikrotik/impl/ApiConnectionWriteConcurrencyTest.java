@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.net.SocketFactory;
 import me.legrange.mikrotik.ApiConnection;
 import me.legrange.mikrotik.ApiConnectionException;
+import me.legrange.mikrotik.ConnectionListener;
 import me.legrange.mikrotik.MikrotikApiException;
 import me.legrange.mikrotik.ResultListener;
 import org.junit.Test;
@@ -33,21 +34,28 @@ public class ApiConnectionWriteConcurrencyTest {
 
     @Test(timeout = 3000)
     public void concurrentTextCommandsWriteWholeSentencesAtomically() throws Exception {
-        CountDownLatch secondCallReady = new CountDownLatch(1);
+        final CountDownLatch secondCallReady = new CountDownLatch(1);
         CoordinatedDataOutputStream output = new CoordinatedDataOutputStream(secondCallReady);
-        ApiConnectionImpl connection = newConnectedConnection(output);
+        final ApiConnectionImpl connection = newConnectedConnection(output);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            Future<?> first = executor.submit(() -> executeAsync(connection, "/first value=alpha"));
+            Future<?> first = executor.submit(new Runnable() {
+                @Override
+                public void run() {
+                    executeAsync(connection, "/first value=alpha");
+                }
+            });
             assertTrue(output.firstWriteEntered.await(500, TimeUnit.MILLISECONDS));
-            Future<?> second = executor.submit(() -> {
-                secondCallReady.countDown();
-                executeAsync(connection, "/second value=beta");
+            Future<?> second = executor.submit(new Runnable() {
+                @Override
+                public void run() {
+                    secondCallReady.countDown();
+                    executeAsync(connection, "/second value=beta");
+                }
             });
 
             first.get(1, TimeUnit.SECONDS);
             second.get(1, TimeUnit.SECONDS);
-
             assertFalse("Complete RouterOS command sentences must not interleave", output.interleaved.get());
         } finally {
             executor.shutdownNow();
@@ -56,28 +64,35 @@ public class ApiConnectionWriteConcurrencyTest {
     }
 
     @Test(timeout = 3000)
-    public void textAndBinaryCommandsUseTheSameWholeSentenceWriteLock() throws Exception {
-        CountDownLatch secondCallReady = new CountDownLatch(1);
+    public void textAndBinaryCommandsUseTheSameWriteLock() throws Exception {
+        final CountDownLatch secondCallReady = new CountDownLatch(1);
         CoordinatedDataOutputStream output = new CoordinatedDataOutputStream(secondCallReady);
-        ApiConnectionImpl connection = newConnectedConnection(output);
+        final ApiConnectionImpl connection = newConnectedConnection(output);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            Future<?> text = executor.submit(() -> executeAsync(connection, "/text value=alpha"));
+            Future<?> text = executor.submit(new Runnable() {
+                @Override
+                public void run() {
+                    executeAsync(connection, "/text value=alpha");
+                }
+            });
             assertTrue(output.firstWriteEntered.await(500, TimeUnit.MILLISECONDS));
-            Future<?> binary = executor.submit(() -> {
-                secondCallReady.countDown();
-                Throwable failure = invokeBinaryExecute(connection, new Command("/file/read"), 40);
-                if (!(failure instanceof ApiConnectionException)
-                        || failure.getMessage() == null
-                        || !failure.getMessage().contains("timed out")) {
-                    throw new AssertionError("Expected binary read timeout after its command was written", failure);
+            Future<?> binary = executor.submit(new Runnable() {
+                @Override
+                public void run() {
+                    secondCallReady.countDown();
+                    Throwable failure = invokeBinaryExecute(connection, new Command("/file/read"), 40);
+                    if (!(failure instanceof ApiConnectionException)
+                            || failure.getMessage() == null
+                            || !failure.getMessage().contains("timed out")) {
+                        throw new AssertionError("Expected binary read timeout after its command was written", failure);
+                    }
                 }
             });
 
             text.get(1, TimeUnit.SECONDS);
             binary.get(1, TimeUnit.SECONDS);
-
-            assertFalse("Text and binary RouterOS command sentences must share one write lock", output.interleaved.get());
+            assertFalse("Text and binary command sentences must share one write lock", output.interleaved.get());
         } finally {
             executor.shutdownNow();
             connection.close();
@@ -85,27 +100,35 @@ public class ApiConnectionWriteConcurrencyTest {
     }
 
     @Test(timeout = 3000)
-    public void sendIOExceptionFailsExistingCommandsAndConnectionLifecycle() throws Exception {
-        CountDownLatch holdSeen = new CountDownLatch(1);
-        try (RouterOsTestServer server = new RouterOsTestServer((s, command) -> {
-            if ("/hold".equals(command.command)) {
-                holdSeen.countDown();
+    public void sendIOExceptionFailsExistingCommandAndSession() throws Exception {
+        final CountDownLatch holdSeen = new CountDownLatch(1);
+        try (RouterOsTestServer server = new RouterOsTestServer(new RouterOsTestServer.Handler() {
+            @Override
+            public void handle(RouterOsTestServer s, RouterOsTestServer.CommandSentence command) {
+                if ("/hold".equals(command.command)) {
+                    holdSeen.countDown();
+                }
             }
         })) {
             ApiConnection connection = connect(server);
-            AtomicReference<MikrotikApiException> heldCommandFailure = new AtomicReference<>();
-            CountDownLatch heldCommandFailed = new CountDownLatch(1);
+            final AtomicReference<MikrotikApiException> heldFailure = new AtomicReference<MikrotikApiException>();
+            final CountDownLatch heldFailed = new CountDownLatch(1);
             connection.execute("/hold", new NoopResultListener() {
                 @Override
                 public void error(MikrotikApiException ex) {
-                    heldCommandFailure.set(ex);
-                    heldCommandFailed.countDown();
+                    heldFailure.set(ex);
+                    heldFailed.countDown();
                 }
             });
             assertTrue(holdSeen.await(750, TimeUnit.MILLISECONDS));
 
-            CountDownLatch connectionLost = new CountDownLatch(1);
-            connection.addConnectionListener(cause -> connectionLost.countDown());
+            final CountDownLatch connectionLost = new CountDownLatch(1);
+            connection.addConnectionListener(new ConnectionListener() {
+                @Override
+                public void connectionLost(ApiConnectionException cause) {
+                    connectionLost.countDown();
+                }
+            });
             setOutput((ApiConnectionImpl) connection, new DataOutputStream(new OutputStream() {
                 @Override
                 public void write(int b) throws IOException {
@@ -120,33 +143,27 @@ public class ApiConnectionWriteConcurrencyTest {
                 assertTrue(expected.getMessage().contains("deterministic send failure"));
             }
 
-            assertTrue("Existing command did not receive the fatal send failure",
-                    heldCommandFailed.await(750, TimeUnit.MILLISECONDS));
-            assertTrue(heldCommandFailure.get() instanceof ApiConnectionException);
-            assertTrue("Connection lifecycle listener was not notified",
-                    connectionLost.await(750, TimeUnit.MILLISECONDS));
+            assertTrue(heldFailed.await(750, TimeUnit.MILLISECONDS));
+            assertTrue(heldFailure.get() instanceof ApiConnectionException);
+            assertTrue(connectionLost.await(750, TimeUnit.MILLISECONDS));
             assertFalse(connection.isConnected());
             connection.close();
         }
     }
 
     @Test(timeout = 3000)
-    public void commonWriterMakesSendFailureTerminalBeforeAnotherWriteCanStart() throws Exception {
+    public void sendFailureBecomesTerminalBeforeAnotherWriteStarts() throws Exception {
         CountingFailingOutputStream failing = new CountingFailingOutputStream();
         ApiConnectionImpl connection = newConnectedConnection(new DataOutputStream(failing));
         try {
             Throwable first = invokeWriteCommand(connection, new Command("/first/failing"));
-
             assertTrue(first instanceof ApiConnectionException);
-            assertFalse("The common writer must make the session terminal before returning from a send failure",
-                    connection.isConnected());
+            assertFalse(connection.isConnected());
             assertEquals(1, failing.writeAttempts);
 
             Throwable second = invokeWriteCommand(connection, new Command("/second/must-not-write"));
-
             assertTrue(second instanceof ApiConnectionException);
-            assertEquals("No writer may touch the stream after the fatal send transition",
-                    1, failing.writeAttempts);
+            assertEquals(1, failing.writeAttempts);
         } finally {
             connection.close();
         }
@@ -175,7 +192,7 @@ public class ApiConnectionWriteConcurrencyTest {
             } catch (InvocationTargetException ex) {
                 return ex.getCause();
             }
-        } catch (ReflectiveOperationException ex) {
+        } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
     }
@@ -227,7 +244,7 @@ public class ApiConnectionWriteConcurrencyTest {
     private static final class CoordinatedDataOutputStream extends DataOutputStream {
         private final CountDownLatch secondCallReady;
         private final CountDownLatch secondWriterObserved = new CountDownLatch(1);
-        private final AtomicReference<Thread> sentenceOwner = new AtomicReference<>();
+        private final AtomicReference<Thread> sentenceOwner = new AtomicReference<Thread>();
         private final AtomicBoolean gateUsed = new AtomicBoolean(false);
         private final AtomicBoolean interleaved = new AtomicBoolean(false);
         private final CountDownLatch firstWriteEntered = new CountDownLatch(1);
