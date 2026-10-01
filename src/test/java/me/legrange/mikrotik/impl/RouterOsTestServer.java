@@ -12,6 +12,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import me.legrange.mikrotik.ApiConnectionException;
 
 final class RouterOsTestServer implements AutoCloseable {
@@ -51,6 +53,17 @@ final class RouterOsTestServer implements AutoCloseable {
 
     int getPort() {
         return server.getLocalPort();
+    }
+
+    boolean awaitClientConnection(long timeoutMs) throws InterruptedException {
+        return clientConnected.await(timeoutMs, TimeUnit.MILLISECONDS);
+    }
+
+    void closeClientConnection() throws IOException {
+        Socket current = client;
+        if (current != null) {
+            current.close();
+        }
     }
 
     synchronized void reply(String type, String tag, String... attributes) throws IOException {
@@ -111,6 +124,7 @@ final class RouterOsTestServer implements AutoCloseable {
     private void run() {
         try (Socket accepted = server.accept()) {
             client = accepted;
+            clientConnected.countDown();
             in = accepted.getInputStream();
             out = accepted.getOutputStream();
             while (!closed) {
@@ -201,6 +215,7 @@ final class RouterOsTestServer implements AutoCloseable {
     private final Handler handler;
     private final ServerSocket server;
     private final Thread thread;
+    private final CountDownLatch clientConnected = new CountDownLatch(1);
     private volatile Socket client;
     private volatile InputStream in;
     private volatile OutputStream out;
