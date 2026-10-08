@@ -105,3 +105,13 @@ This low-level library intentionally does not provide:
 - a public `CommandHandle`.
 
 Those concerns belong in higher-level consumers such as `praktimarc/mikrotik-facade` if and when they are required.
+
+## Maven Central distribution invariants
+
+- Public Maven coordinates: `io.github.praktimarc:mikrotik`; the consumer `praktimarc/mikrotik-facade` pins `3.0.8-praktimarc.4`.
+- Existing `.4` release baseline: commit `c170858efaac04fc78771903ef4c2bdbb6d35325` and tag `v3.0.8-praktimarc.4`. Neither release tag nor low-level runtime API changes for publishing.
+- Normal builds remain on Java 11 and need no publishing credentials.
+- Publishing uses a dedicated `central-release` Maven profile and a manually dispatched GitHub Actions workflow. GPG credentials and Sonatype user tokens are only GitHub Actions secrets.
+- The staging workflow verifies unchanged `src/` and byte-for-byte matching compiled classes against the GitHub Release before uploading.
+- `autoPublish=false` prevents automatic irreversible publication. Central publication requires separate authorization.
+- Publication and downstream fresh-cache Maven verification are pending. The authoritative procedure is `docs/publishing.md`.

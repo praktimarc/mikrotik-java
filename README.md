@@ -32,23 +32,9 @@ When the fork moves to a later upstream base, the fork counter restarts, for exa
 
 ## Getting the Praktimarc fork
 
-Release JARs are published on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases).
+The main JAR, source JAR, and Javadoc JAR for `3.0.8-praktimarc.4` are already available on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases). Maven Central publishing is being prepared. Until it has been externally verified, do not assume this version can already be resolved from Maven Central.
 
-A release contains the main JAR, source JAR, and Javadoc JAR. GitHub Releases are the initial distribution mechanism and do **not** by themselves provide a remote Maven repository.
-
-### Build and install locally with Maven
-
-A JDK 11 or newer and Maven are required. The build targets Java 11 bytecode.
-
-Clone this repository and run:
-
-```bash
-mvn clean install
-```
-
-This builds, tests, and installs the fork into the local Maven repository.
-
-Projects on the same machine can then use:
+Once this release is published to Maven Central, consumers can use its normal Maven coordinates without adding any custom repository, authentication, or locally installed JAR:
 
 ```xml
 <dependency>
@@ -58,18 +44,15 @@ Projects on the same machine can then use:
 </dependency>
 ```
 
-Alternatively, after downloading the binary JAR from GitHub Releases, install it into the local Maven repository with:
+For contributors, Java 11 or newer and Maven are required. This build targets Java 11 bytecode:
 
 ```bash
-mvn install:install-file \
-  -Dfile=mikrotik-3.0.8-praktimarc.4.jar \
-  -DgroupId=io.github.praktimarc \
-  -DartifactId=mikrotik \
-  -Dversion=3.0.8-praktimarc.4 \
-  -Dpackaging=jar
+mvn clean verify
 ```
 
-No Java import changes are required when switching from upstream. Existing imports such as `me.legrange.mikrotik.ApiConnection` remain valid.
+No import changes are required compared to upstream. Existing packages such as `me.legrange.mikrotik.ApiConnection` remain unchanged.
+
+See [Maven Central publishing](docs/publishing.md) for prerequisites, signed staging, approval gates, and consumer verification.
 
 ## Binary-safe file downloads
 
