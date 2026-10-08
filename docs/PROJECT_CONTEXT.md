@@ -112,6 +112,7 @@ Those concerns belong in higher-level consumers such as `praktimarc/mikrotik-fac
 - Existing `.4` release baseline: commit `c170858efaac04fc78771903ef4c2bdbb6d35325` and tag `v3.0.8-praktimarc.4`. Neither release tag nor low-level runtime API changes for publishing.
 - Normal builds remain on Java 11 and need no publishing credentials.
 - Publishing uses a dedicated `central-release` Maven profile and a manually dispatched GitHub Actions workflow. GPG credentials and Sonatype user tokens are only GitHub Actions secrets.
+- The Central publishing workflow pins Maven 3.9.16 with SHA-512 archive verification to avoid Maven 3.10.x staging metadata compatibility failures in `central-publishing-maven-plugin:0.11.0`. Normal CI is not pinned.
 - The staging workflow verifies unchanged `src/` and byte-for-byte matching compiled classes against the GitHub Release before uploading.
 - `autoPublish=false` prevents automatic irreversible publication. Central publication requires separate authorization.
 - Publication and downstream fresh-cache Maven verification are pending. The authoritative procedure is `docs/publishing.md`.

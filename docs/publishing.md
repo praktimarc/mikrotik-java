@@ -27,6 +27,14 @@ The publishing setup is prepared separately from the actual deployment. Do not c
 
 The workflow uses `actions/setup-java@v6` to create temporary Maven authentication settings and import the signing key. Secrets must not be stored in the POM, workflows, documentation, source tree, or commit history.
 
+## Pinned Maven version for Central staging
+
+The publishing workflow explicitly installs **Apache Maven 3.9.16**, verifies the official Apache binary archive against its published SHA-512 checksum, and fails early if another Maven version is selected. This applies only to `.github/workflows/central-publish.yml`; regular CI and the Java 11 target remain unchanged.
+
+The initial Central staging attempt for `3.0.8-praktimarc.4` (deployment `cc027ab7-0182-4a2d-8473-86ace1ac2a75`) successfully built and signed all artifacts, then failed Sonatype bundle validation with `Bundle has content that does NOT have a .pom file: io/github/praktimarc/mikrotik`. Maven 3.10.0 can generate extra local metadata under the Central plugin's staging tree. Pinning Maven 3.9.16 avoids that known compatibility issue while keeping `central-publishing-maven-plugin:0.11.0` unchanged.
+
+This is a publishing-tool compatibility workaround, not a change to the library's runtime or API. Reassess it after the Central plugin supports Maven 3.10.x, and keep `autoPublish=false` throughout.
+
 ## Prepare and stage a release
 
 For `.4`, no new Git tag or GitHub Release is necessary. After separate authorization for staging/uploading to Sonatype, manually start **Stage Maven Central Release** on branch `master` with input `3.0.8-praktimarc.4`.

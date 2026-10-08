@@ -38,6 +38,45 @@ jobs:
           gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
           gpg-passphrase-env-var: MAVEN_GPG_PASSPHRASE
 
+      - name: Install pinned Maven 3.9.16
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAVEN_VERSION="3.9.16"
+          ARCHIVE="${RUNNER_TEMP}/apache-maven-${MAVEN_VERSION}-bin.tar.gz"
+          BASE_URL="https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries"
+
+          curl --fail --location --show-error --silent --retry 3 \
+            --output "${ARCHIVE}" "${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz"
+          curl --fail --location --show-error --silent --retry 3 \
+            --output "${ARCHIVE}.sha512" "${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz.sha512"
+
+          EXPECTED_SHA512="$(tr -d '[:space:]' < "${ARCHIVE}.sha512")"
+          if [[ ! "${EXPECTED_SHA512}" =~ ^[0-9a-fA-F]{128}$ ]]; then
+            echo "Invalid official Maven SHA-512 checksum file." >&2
+            exit 1
+          fi
+          ACTUAL_SHA512="$(sha512sum "${ARCHIVE}" | awk '{print $1}')"
+          if [[ "${ACTUAL_SHA512}" != "${EXPECTED_SHA512}" ]]; then
+            echo "Apache Maven archive checksum mismatch." >&2
+            exit 1
+          fi
+
+          tar -xzf "${ARCHIVE}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/apache-maven-${MAVEN_VERSION}/bin" >> "${GITHUB_PATH}"
+          echo "MAVEN_HOME=${RUNNER_TEMP}/apache-maven-${MAVEN_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Verify pinned Maven runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn --version
+          MAVEN_VERSION_LINE="$(mvn --version | head -n 1)"
+          if [[ "${MAVEN_VERSION_LINE}" != "Apache Maven 3.9.16"* ]]; then
+            echo "Publishing requires Maven 3.9.16, got: ${MAVEN_VERSION_LINE}" >&2
+            exit 1
+          fi
+
       - name: Verify version and immutable release sources
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
