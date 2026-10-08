@@ -115,4 +115,4 @@ Those concerns belong in higher-level consumers such as `praktimarc/mikrotik-fac
 - The Central publishing workflow pins Maven 3.9.16 with SHA-512 archive verification to avoid Maven 3.10.x staging metadata compatibility failures in `central-publishing-maven-plugin:0.11.0`. Normal CI is not pinned.
 - The staging workflow verifies unchanged `src/` and byte-for-byte matching compiled classes against the GitHub Release before uploading.
 - `autoPublish=false` prevents automatic irreversible publication. Central publication requires separate authorization.
-- Publication and downstream fresh-cache Maven verification are pending. The authoritative procedure is `docs/publishing.md`.
+- Version `3.0.8-praktimarc.4` has been published to Maven Central (2026-10-08); its POM and JAR were externally downloaded from an empty Maven cache. A complete `mikrotik-facade` test suite run is a distinct downstream gate. The authoritative procedure is `docs/publishing.md`.

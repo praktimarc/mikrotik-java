@@ -32,9 +32,9 @@ When the fork moves to a later upstream base, the fork counter restarts, for exa
 
 ## Getting the Praktimarc fork
 
-The main JAR, source JAR, and Javadoc JAR for `3.0.8-praktimarc.4` are already available on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases). Maven Central publishing is being prepared. Until it has been externally verified, do not assume this version can already be resolved from Maven Central.
+Version `3.0.8-praktimarc.4` is published to Maven Central and is also available with its source and Javadoc JARs on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases). The POM and main JAR were downloaded successfully from the default Maven Central repository in an external clean-cache consumer build on 2026-10-08.
 
-Once this release is published to Maven Central, consumers can use its normal Maven coordinates without adding any custom repository, authentication, or locally installed JAR:
+Consumers can use the normal Maven coordinates without a custom repository, authentication, or locally installed JAR:
 
 ```xml
 <dependency>

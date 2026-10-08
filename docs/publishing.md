@@ -11,7 +11,7 @@ This fork publishes under `io.github.praktimarc:mikrotik`. It retains Java 11 an
 - Publishing metadata lives on `master` while `src/` remains identical to the release tag. The workflow also compares all compiled class bytes against the existing GitHub Release JAR.
 - The Maven build uses a fixed archive timestamp for this release. Update `project.build.outputTimestamp` when preparing each new version.
 
-The publishing setup is prepared separately from the actual deployment. Do not claim that `.4` is available on Maven Central until a fresh external Maven resolution succeeds.
+Release `3.0.8-praktimarc.4` was signed and validated in Central Portal deployment `e238ee3d-c16e-4656-8217-b7e8ec7ba35c`, then manually published on 2026-10-08. Its POM and JAR were resolved from the default Maven Central endpoint in an external empty-cache build of `praktimarc/mikrotik-facade` on the same date. The consumer's full `mvn clean verify` is a separate verification gate.
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ This is a publishing-tool compatibility workaround, not a change to the library'
 
 ## Prepare and stage a release
 
-For `.4`, no new Git tag or GitHub Release is necessary. After separate authorization for staging/uploading to Sonatype, manually start **Stage Maven Central Release** on branch `master` with input `3.0.8-praktimarc.4`.
+Version `.4` is already permanently published; do not upload or attempt to overwrite it again. For subsequent releases, after obtaining separate authorization to upload to Sonatype, manually start **Stage Maven Central Release** on branch `master` with the exact new release version as input.
 
 The workflow checks:
 
@@ -54,7 +54,7 @@ After reviewing the deployment at [Central Portal Deployments](https://central.s
 
 ## External verification
 
-After the portal reports the version as published and Maven Central has propagated the files, verify with a clean local Maven repository:
+To independently verify a published version with a clean local Maven repository, use:
 
 ```bash
 mvn -B -U -Dmaven.repo.local=/tmp/mikrotik-clean-m2 \
