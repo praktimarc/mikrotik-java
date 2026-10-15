@@ -27,6 +27,9 @@ public class ExactWordsConnectionTest {
                 "?=base-mac=D0:EA:11:8A:2F:9B",
                 "?base-mac",
                 "?base-mac=D0:EA:11:8A:2F:9B");
+        CountDownLatch closeServer = new CountDownLatch(1);
+        CountDownLatch requestCaptured = new CountDownLatch(1);
+        AtomicReference<List<String>> transmittedWords = new AtomicReference<>();
         try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             var worker = Executors.newSingleThreadExecutor();
             try {
@@ -34,12 +37,15 @@ public class ExactWordsConnectionTest {
                     try (Socket socket = server.accept()) {
                         List<String> sentence = Util.readSentence(socket.getInputStream())
                                 .stream().map(bytes -> new String(bytes, StandardCharsets.UTF_8)).collect(java.util.stream.Collectors.toList());
+                        transmittedWords.set(sentence);
+                        requestCaptured.countDown();
                         String tagWord = sentence.stream().filter(w -> w.startsWith(".tag="))
                                 .findFirst().orElseThrow();
                         String tag = tagWord.substring(".tag=".length());
                         Util.writeWords(List.of("!re", "=identity=cap-test"), tag, socket.getOutputStream());
                         Util.writeWords(List.of("!done", "=ret=complete"), tag, socket.getOutputStream());
                         socket.getOutputStream().flush();
+                        closeServer.await(3, TimeUnit.SECONDS);
                         return sentence;
                     }
                 });
@@ -67,13 +73,16 @@ public class ExactWordsConnectionTest {
                     assertNull(failure.get());
                     assertEquals("cap-test", received.get().get("identity"));
                     assertEquals("complete", done.get().get("ret"));
-                    List<String> transmitted = seen.get(2, TimeUnit.SECONDS);
+                    assertTrue(requestCaptured.await(2, TimeUnit.SECONDS));
+                    List<String> transmitted = transmittedWords.get();
                     assertEquals(requested, transmitted.subList(0, requested.size()));
                     assertEquals(".tag=" + tag, transmitted.get(transmitted.size() - 1));
                 } finally {
                     client.close();
+                    closeServer.countDown();
                 }
             } finally {
+                closeServer.countDown();
                 worker.shutdownNow();
             }
         }
