@@ -49,6 +49,15 @@ final class Util {
         out.write(0);
     }
 
+    /** Serializes complete UTF-8 RouterOS API words without running the command parser. */
+    static void writeWords(List<String> words, String tag, OutputStream out) throws IOException {
+        for (String word : words) {
+            encode(word, out);
+        }
+        encode(".tag=" + tag, out);
+        out.write(0);
+    }
+
     /**
      * Read one RouterOS API word without converting its payload to text.
      */

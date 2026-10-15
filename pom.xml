@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.praktimarc</groupId>
   <artifactId>mikrotik</artifactId>
-  <version>3.0.8-praktimarc.4</version>
+  <version>3.0.8-praktimarc.5-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>Mikrotik API Java Client Library</name>
   <description>A maintained Java client fork for the MikroTik RouterOS native API.</description>

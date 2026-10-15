@@ -123,6 +123,67 @@ public final class ApiConnectionImpl extends ApiConnection {
     }
 
     @Override
+    public String executeWords(List<String> words, ResultListener listener) throws MikrotikApiException {
+        List<String> verified = validateWords(words);
+        if (listener == null) {
+            throw new NullPointerException("listener");
+        }
+        String tag = nextTag();
+        registerTextListener(tag, listener);
+        sendWords(verified, tag);
+        return tag;
+    }
+
+    private static List<String> validateWords(List<String> words) {
+        if (words == null) {
+            throw new NullPointerException("words");
+        }
+        if (words.isEmpty()) {
+            throw new IllegalArgumentException("RouterOS command words must not be empty");
+        }
+        List<String> copy = new ArrayList<>(words.size());
+        for (int i = 0; i < words.size(); i++) {
+            String word = words.get(i);
+            if (word == null || word.isEmpty()) {
+                throw new IllegalArgumentException("RouterOS words must not contain null or empty entries");
+            }
+            if (word.indexOf((char) 0) >= 0) {
+                throw new IllegalArgumentException("RouterOS words must not contain NUL characters");
+            }
+            if (i == 0 && !word.startsWith("/")) {
+                throw new IllegalArgumentException("The first RouterOS word must be an absolute command path");
+            }
+            if (word.startsWith(".tag=")) {
+                throw new IllegalArgumentException("RouterOS correlation tags are managed by the connection");
+            }
+            copy.add(word);
+        }
+        return java.util.Collections.unmodifiableList(copy);
+    }
+
+    private void sendWords(List<String> words, String tag) throws MikrotikApiException {
+        ApiConnectionException sendFailure = null;
+        FatalTransition transition = null;
+        synchronized (writeLock) {
+            synchronized (lifecycleLock) {
+                requireConnectedLocked();
+            }
+            try {
+                Util.writeWords(words, tag, out);
+                return;
+            } catch (IOException ex) {
+                rollbackCommandRegistration(tag);
+                sendFailure = new ApiConnectionException(ex.getMessage(), ex);
+                transition = beginFatalFailure(sendFailure);
+            }
+        }
+        if (transition != null) {
+            completeFatalFailure(transition);
+        }
+        throw sendFailure;
+    }
+
+    @Override
     public long downloadFile(String remoteFile, Path localFile) throws MikrotikApiException, IOException {
         if (remoteFile == null) {
             throw new NullPointerException("remoteFile");
