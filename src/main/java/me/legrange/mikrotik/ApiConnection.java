@@ -108,6 +108,23 @@ public abstract class ApiConnection implements AutoCloseable {
     public abstract String execute(String cmd, ResultListener lis) throws MikrotikApiException;
 
     /**
+     * Executes exact RouterOS protocol words without invoking the pseudo-CLI parser.
+     * The first word must be the absolute command path. The following words are
+     * sent as-is (UTF-8, in insertion order), followed by an internally generated
+     * correlation tag. Do not supply a tag or the sentence terminator.
+     *
+     * @param words exact command path plus RouterOS API words
+     * @param listener receives replies and terminal metadata
+     * @return correlation tag (for cancellation)
+     * @throws MikrotikApiException when dispatch fails
+     * @throws UnsupportedOperationException for third-party connections without support
+     * @since 3.0.8-praktimarc.5
+     */
+    public String executeWords(List<String> words, ResultListener listener) throws MikrotikApiException {
+        throw new UnsupportedOperationException("This ApiConnection implementation does not support executeWords");
+    }
+
+    /**
      * Register a listener for unexpected fatal loss of an established
      * connection. The built-in implementation deduplicates registrations by
      * listener identity. If the connection has already entered its fatal failed
