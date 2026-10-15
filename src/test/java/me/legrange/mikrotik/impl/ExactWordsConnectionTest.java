@@ -33,7 +33,7 @@ public class ExactWordsConnectionTest {
                 Future<List<String>> seen = worker.submit(() -> {
                     try (Socket socket = server.accept()) {
                         List<String> sentence = Util.readSentence(socket.getInputStream())
-                                .stream().map(bytes -> new String(bytes, StandardCharsets.UTF_8)).toList();
+                                .stream().map(bytes -> new String(bytes, StandardCharsets.UTF_8)).collect(java.util.stream.Collectors.toList());
                         String tagWord = sentence.stream().filter(w -> w.startsWith(".tag="))
                                 .findFirst().orElseThrow();
                         String tag = tagWord.substring(".tag=".length());
