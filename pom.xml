@@ -5,7 +5,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.praktimarc</groupId>
   <artifactId>mikrotik</artifactId>
-  <version>3.0.8-praktimarc.5-SNAPSHOT</version>
+  <version>3.0.8-praktimarc.5</version>
   <packaging>jar</packaging>
   <name>Mikrotik API Java Client Library</name>
   <description>A maintained Java client fork for the MikroTik RouterOS native API.</description>
@@ -38,7 +38,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.release>11</maven.compiler.release>
-    <project.build.outputTimestamp>2026-10-01T22:01:24Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-10-19T00:00:00Z</project.build.outputTimestamp>
   </properties>
   <dependencies>
     <dependency>

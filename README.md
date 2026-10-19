@@ -9,12 +9,12 @@ This fork keeps the existing Java API and package names compatible with upstream
 ![Java CI with Maven](https://github.com/praktimarc/mikrotik-java/actions/workflows/maven.yml/badge.svg)
 
 - Upstream base version: `3.0.8`
-- Current fork version: `3.0.8-praktimarc.4`
-- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.4`
+- Current fork version: `3.0.8-praktimarc.5`
+- Maven coordinates: `io.github.praktimarc:mikrotik:3.0.8-praktimarc.5`
 - Java packages remain unchanged: `me.legrange.mikrotik.*`
 - Java baseline: Java 11; builds require JDK 11 or newer
 - License: Apache License 2.0; original attribution is retained
-- Detailed release notes: [v3.0.8-praktimarc.4](docs/releases/v3.0.8-praktimarc.4.md)
+- Detailed release notes: [v3.0.8-praktimarc.5](docs/releases/v3.0.8-praktimarc.5.md)
 
 Fork versions use the upstream version plus a Praktimarc suffix:
 
@@ -23,6 +23,7 @@ Fork versions use the upstream version plus a Praktimarc suffix:
 3.0.8-praktimarc.2
 3.0.8-praktimarc.3
 3.0.8-praktimarc.4
+3.0.8-praktimarc.5
 ...
 ```
 
@@ -30,9 +31,29 @@ When the fork moves to a later upstream base, the fork counter restarts, for exa
 
 `3.0.8-praktimarc.1` was the first published fork release and fixed synchronous commands where an immediate RouterOS API error could otherwise be replaced by a later command-timeout exception. `3.0.8-praktimarc.2` existed only as an intermediate source version and was never tagged or published; it introduced the binary-safe RouterOS file-download work. `3.0.8-praktimarc.3` is the first published release after `.1` and includes both that unpublished `.2` work and the transport, lifecycle, protocol, concurrency, and public-exception hardening documented below. `3.0.8-praktimarc.4` is a focused follow-up that exposes terminal RouterOS `!done` properties through the public listener API while preserving the existing synchronous and legacy-listener behavior.
 
+## Exact RouterOS API words (3.0.8-praktimarc.5)
+
+This release adds an opt-in, additive public word-level operation for debugging
+RouterOS API query behavior without the pseudo-command string parser:
+
+```java
+con.executeWords(
+    java.util.List.of(
+        "/interface/wifi/capsman/remote-cap/print",
+        "?base-mac=D0:EA:11:8A:2F:9B"),
+    listener);
+```
+
+The connection adds its own correlation tag, preserves the exact supplied
+UTF-8 command/query words and their order, and continues to use the existing
+authenticated TCP/TLS connection and listener/cancellation pipeline. It does
+not open another socket or reinterpret the query syntax. This interface can
+execute mutating commands and should only be used with trusted input. See
+[the .5 release notes](docs/releases/v3.0.8-praktimarc.5.md).
+
 ## Getting the Praktimarc fork
 
-Version `3.0.8-praktimarc.4` is published to Maven Central and is also available with its source and Javadoc JARs on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases). The POM and main JAR were downloaded successfully from the default Maven Central repository in an external clean-cache consumer build on 2026-10-08.
+Version `3.0.8-praktimarc.4` is published to Maven Central and is also available with its source and Javadoc JARs on the [GitHub Releases page](https://github.com/praktimarc/mikrotik-java/releases). Release `3.0.8-praktimarc.5` is prepared for GitHub Release; Maven Central distribution follows signed bundle validation and a separate manual Publish approval. Do not assume the new version is already indexed in Central.
 
 Consumers can use the normal Maven coordinates without a custom repository, authentication, or locally installed JAR:
 
