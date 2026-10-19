@@ -2,11 +2,15 @@
 
 This fork publishes under `io.github.praktimarc:mikrotik`. It retains Java 11 and the public `me.legrange.mikrotik.*` API. Maven Central is the distribution target because consumers can resolve it anonymously with standard Maven settings.
 
-## Current release and baseline
+## Release baseline for 3.0.8-praktimarc.5
 
-- Release: `3.0.8-praktimarc.4`
-- Baseline GitHub tag: `v3.0.8-praktimarc.4`
-- Baseline commit: `c170858efaac04fc78771903ef4c2bdbb6d35325`
+- Release candidate: `3.0.8-praktimarc.5`
+- Expected immutable GitHub tag: `v3.0.8-praktimarc.5`
+- The release workflow creates the annotated tag and GitHub Release on a
+  `release: v3.0.8-praktimarc.5` commit after Maven verification. Never
+  substitute an unverified SHA or change source files after tagging.
+- The public `ApiConnection.executeWords(List<String>, ResultListener)`
+  supports unchanged API words on the same authenticated TCP/TLS connection.
 - The tag and GitHub Release must never be modified to introduce publishing metadata.
 - Publishing metadata lives on `master` while `src/` remains identical to the release tag. The workflow also compares all compiled class bytes against the existing GitHub Release JAR.
 - The Maven build uses a fixed archive timestamp for this release. Update `project.build.outputTimestamp` when preparing each new version.
@@ -37,7 +41,7 @@ This is a publishing-tool compatibility workaround, not a change to the library'
 
 ## Prepare and stage a release
 
-Version `.4` is already permanently published; do not upload or attempt to overwrite it again. For subsequent releases, after obtaining separate authorization to upload to Sonatype, manually start **Stage Maven Central Release** on branch `master` with the exact new release version as input.
+Version `.4` is already permanently published; do not upload or attempt to overwrite it again. For release `.5`, after the GitHub Release exists and upload is authorized, manually start **Stage Maven Central Release** on branch `master` with version input `3.0.8-praktimarc.5`.
 
 The workflow checks:
 
@@ -59,14 +63,14 @@ To independently verify a published version with a clean local Maven repository,
 ```bash
 mvn -B -U -Dmaven.repo.local=/tmp/mikrotik-clean-m2 \
   org.apache.maven.plugins:maven-dependency-plugin:3.8.1:get \
-  -Dartifact=io.github.praktimarc:mikrotik:3.0.8-praktimarc.4
+  -Dartifact=io.github.praktimarc:mikrotik:3.0.8-praktimarc.5
 ```
 
 Then clone `praktimarc/mikrotik-facade` and run `mvn clean verify` with an empty Maven cache and Java 17. No extra repository, token, installed JAR, or `systemPath` must be necessary.
 
 ## Later releases
 
-1. Update the POM version to e.g. `3.0.8-praktimarc.5`, update the archive timestamp and release documentation, and run normal CI and compatibility tests.
+1. Update the POM version to the next available version, update the archive timestamp and release documentation, and run normal CI and compatibility tests.
 2. The existing `release.yml` **automatically** creates an annotated tag and GitHub Release after pushing a `release: v<version>` commit to `master`. Because those are separate actions, obtain explicit approval for tag creation and the GitHub Release before pushing such a commit.
 3. Once the GitHub tag and release assets exist, obtain approval for Sonatype upload and manually dispatch the Central staging workflow using the exact version.
 4. Review the signed bundle, then obtain separate explicit authorization for permanent publication in the Central Portal.
